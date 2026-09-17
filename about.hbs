@@ -1,0 +1,32 @@
+{{! Handlebars template for `cargo about generate` -> THIRD-PARTY-LICENSES.md }}
+# Third-party licenses
+
+`gitatlas` is distributed under the MIT License (see [`LICENSE`](LICENSE)). The
+compiled binary statically links the Rust crates listed below; each is used
+under its own license, reproduced in full.
+
+This file is generated — do not edit by hand. Regenerate after changing
+dependencies with:
+
+    cargo about generate about.hbs -o THIRD-PARTY-LICENSES.md
+
+## Summary
+
+{{#each overview}}
+- **{{{name}}}** — {{count}} crate(s)
+{{/each}}
+{{#each licenses}}
+
+---
+
+## {{{name}}}
+
+Applies to:
+{{#each used_by}}
+- `{{crate.name}} {{crate.version}}`
+{{/each}}
+
+````text
+{{{text}}}
+````
+{{/each}}

@@ -1,0 +1,11 @@
+# Build artifacts
+/target
+
+# Test inputs (cloned repos) and all generated outputs
+/repos
+/output
+
+# Editor / OS
+*.tmp
+*.bin.tmp
+.DS_Store

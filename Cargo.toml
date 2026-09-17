@@ -1,0 +1,50 @@
+[package]
+name = "gitatlas"
+version = "1.0.0"
+edition = "2024"
+rust-version = "1.88"
+license = "MIT"
+description = "Render the evolution of a git repository as an animated treemap 'atlas' video (a gource-style visualizer)."
+repository = "https://github.com/SupremeVoid/gitatlas"
+homepage = "https://github.com/SupremeVoid/gitatlas"
+readme = "README.md"
+keywords = ["git", "visualization", "treemap", "video", "gource"]
+categories = ["command-line-utilities", "visualization"]
+# Keep the README demo GIF, test inputs/outputs, and the cargo-about tooling out
+# of the published crate. The embedded font + its Apache license and the
+# generated THIRD-PARTY-LICENSES.md must stay in.
+exclude = ["assets/demo.gif", "repos/", "output/", "about.toml", "about.hbs"]
+
+[[bin]]
+name = "gitatlas"
+path = "src/main.rs"
+
+[dependencies]
+anyhow = "1.0.104"
+clap = { version = "4.6.7", features = ["derive"] }
+fontdue = "0.9.4"
+globset = "0.4.20"
+image = { version = "0.25.10", default-features = false, features = ["png", "jpeg"] }
+indicatif = "0.18.6"
+md-5 = "0.11.0"
+rayon = "1.12.0"
+rustc-hash = "2.1.3"
+serde = { version = "1.0.229", features = ["derive"] }
+tiny-skia = "0.12.0"
+toml = "1.1.6"
+ureq = "3.4.2"
+
+# Fast, tight release builds — performance is a primary goal.
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+panic = "abort"
+strip = true
+
+# A middle profile for quick benchmarking during development (fast compile, optimized runtime).
+[profile.bench-dev]
+inherits = "release"
+lto = false
+codegen-units = 16
+strip = false

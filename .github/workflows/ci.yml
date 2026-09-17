@@ -1,0 +1,72 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  # Lint gate runs on a PINNED toolchain so `-D warnings` is reproducible: a new
+  # stable Rust that adds a default lint can't spontaneously fail unrelated PRs.
+  # Bump this version deliberately (and fix any new lints) when you want them.
+  lint:
+    name: fmt · clippy (pinned 1.98)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@1.98
+        with:
+          components: rustfmt, clippy
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Format
+        run: cargo fmt --all --check
+
+      - name: Clippy
+        run: cargo clippy --all-targets -- -D warnings
+
+  # Build + test + smoke run on current stable so real breakage on a new compiler
+  # is caught, without the brittle `-D warnings` gate above.
+  build-test:
+    name: test · build · smoke
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # full history so the smoke test has something to render
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Test
+        run: cargo test --locked
+
+      - name: Build
+        run: cargo build --release --locked
+
+      - name: Verify crate packaging
+        run: |
+          cargo package --list --locked --allow-dirty > /tmp/pkg.txt
+          grep -q "assets/RobotoMono.ttf" /tmp/pkg.txt || { echo "::error::bundled font missing from crate package"; exit 1; }
+          grep -q "assets/Apache-2.0.txt" /tmp/pkg.txt || { echo "::error::font license missing from crate package"; exit 1; }
+          grep -q "THIRD-PARTY-LICENSES.md" /tmp/pkg.txt || { echo "::error::THIRD-PARTY-LICENSES.md missing from crate package"; exit 1; }
+          if grep -q "assets/demo.gif" /tmp/pkg.txt; then echo "::error::demo.gif should be excluded from the crate"; exit 1; fi
+
+      - name: Smoke test (no ffmpeg needed)
+        run: |
+          ./target/release/gitatlas --version
+          ./target/release/gitatlas info .
+          ./target/release/gitatlas languages .
+          ./target/release/gitatlas snapshot . -o /tmp/smoke.png --resolution 800x450 --quality draft
+          test -s /tmp/smoke.png && echo "snapshot OK ($(stat -c%s /tmp/smoke.png) bytes)"

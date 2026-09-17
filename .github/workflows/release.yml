@@ -1,0 +1,78 @@
+name: Release
+
+# Build the installable Linux artifact. Triggered by pushing a version tag
+# (e.g. `git tag v1.0.0 && git push --tags`) or manually via the Actions tab.
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Version label for the artifact (e.g. v1.0.0)'
+        required: true
+        default: dev
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  linux:
+    name: Build Linux x86_64 binary
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Build (release)
+        run: cargo build --release --locked
+
+      - name: Verify version matches the tag
+        run: |
+          CARGO_VER="$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[0].version')"
+          BIN_VER="$(./target/release/gitatlas --version | awk '{print $2}')"
+          echo "cargo=$CARGO_VER bin=$BIN_VER"
+          if [ "${{ github.event_name }}" = "push" ]; then
+            TAG_VER="${GITHUB_REF_NAME#v}"
+            if [ "$CARGO_VER" != "$TAG_VER" ]; then
+              echo "::error::tag $GITHUB_REF_NAME does not match Cargo version $CARGO_VER — bump Cargo.toml"
+              exit 1
+            fi
+          fi
+
+      - name: Package
+        id: package
+        run: |
+          VERSION="${{ github.event.inputs.tag || github.ref_name }}"
+          VERSION="${VERSION#v}" # tarball name matches `gitatlas --version` (no leading v)
+          DIST="gitatlas-${VERSION}-x86_64-unknown-linux-gnu"
+          mkdir -p "$DIST/assets"
+          cp target/release/gitatlas "$DIST/"
+          cp README.md LICENSE NOTICE.md THIRD-PARTY-LICENSES.md "$DIST/"
+          # The binary embeds Roboto Mono (Apache-2.0); ship its license + the font
+          # so the distribution satisfies Apache-2.0 section 4(a).
+          cp assets/Apache-2.0.txt assets/RobotoMono.ttf "$DIST/assets/"
+          tar -czf "${DIST}.tar.gz" "$DIST"
+          sha256sum "${DIST}.tar.gz" | tee "${DIST}.tar.gz.sha256"
+          echo "dist=${DIST}" >> "$GITHUB_OUTPUT"
+
+      - name: Publish GitHub release (tag pushes)
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            gitatlas-*.tar.gz
+            gitatlas-*.tar.gz.sha256
+          generate_release_notes: true
+
+      - name: Upload artifact (manual runs)
+        if: github.event_name == 'workflow_dispatch'
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.package.outputs.dist }}
+          path: gitatlas-*.tar.gz
