@@ -4,7 +4,8 @@
 
 use rustc_hash::FxHashMap;
 
-use crate::color::{hash_str, hue_from_hash};
+use crate::color::hash_str;
+use crate::groups::ColorMap;
 use crate::ingest::{ChangeKind, Commit, History};
 
 /// Current size (line count) of every path; -1 means "not present".
@@ -119,7 +120,13 @@ pub struct StateSnapshot {
 /// `max_depth` (0 = unlimited) caps folder nesting. Beyond it, `collapse=false`
 /// (omit) drops the file entirely, while `collapse=true` merges each too-deep
 /// subfolder into a single aggregate tile at the cutoff.
-pub fn build_tree(files: &[(u32, u32)], history: &History, max_depth: u32, collapse: bool) -> Tree {
+pub fn build_tree(
+    files: &[(u32, u32)],
+    history: &History,
+    colors: &ColorMap,
+    max_depth: u32,
+    collapse: bool,
+) -> Tree {
     {
         let mut tree = Tree::new();
         // dir full-path hash -> node index
@@ -130,8 +137,7 @@ pub fn build_tree(files: &[(u32, u32)], history: &History, max_depth: u32, colla
             let pid = pid as usize;
             let sz = sz as i32;
             let path = &history.paths[pid];
-            let root_seg = path.split('/').next().unwrap_or("");
-            let group_hue = hue_from_hash(hash_str(root_seg));
+            let group_hue = colors.path_hue[pid];
 
             let mut parent: u32 = 0;
             let mut full = String::new();
@@ -184,7 +190,7 @@ pub fn build_tree(files: &[(u32, u32)], history: &History, max_depth: u32, colla
                                     children: Vec::new(),
                                     path_id: -1,
                                     key,
-                                    group_hue,
+                                    group_hue: colors.dir_hue(&full, key, group_hue),
                                     depth,
                                 });
                                 tree.nodes[parent as usize].children.push(idx);
@@ -210,7 +216,7 @@ pub fn build_tree(files: &[(u32, u32)], history: &History, max_depth: u32, colla
                             children: Vec::new(),
                             path_id: -1,
                             key,
-                            group_hue,
+                            group_hue: colors.dir_hue(&full, key, group_hue),
                             depth,
                         });
                         tree.nodes[parent as usize].children.push(idx);
@@ -367,16 +373,16 @@ mod tests {
         let h = hist(&["a/x.rs", "a/b/c/d.rs"]);
         let files = vec![(0u32, 5u32), (1u32, 10u32)];
 
-        let full = build_tree(&files, &h, 0, false);
+        let full = build_tree(&files, &h, &ColorMap::top_level(&h.paths), 0, false);
         assert_eq!(full.nodes[0].raw_size, 15);
         assert_eq!(full.nodes.iter().filter(|n| !n.is_dir).count(), 2);
 
         // omit at depth 1 drops the too-deep file.
-        let omit = build_tree(&files, &h, 1, false);
+        let omit = build_tree(&files, &h, &ColorMap::top_level(&h.paths), 1, false);
         assert_eq!(omit.nodes[0].raw_size, 5);
 
         // collapse at depth 1 keeps the size via an aggregate tile.
-        let coll = build_tree(&files, &h, 1, true);
+        let coll = build_tree(&files, &h, &ColorMap::top_level(&h.paths), 1, true);
         assert_eq!(coll.nodes[0].raw_size, 15);
     }
 }

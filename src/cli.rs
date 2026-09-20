@@ -282,6 +282,28 @@ pub struct RenderArgs {
     #[arg(long, default_value = "#0c0d10", help_heading = "Layout")]
     pub background: String,
 
+    // ---------------- Color groups ----------------
+    /// Color by the subfolders of FOLDER instead of by top-level folder
+    /// (repeatable), e.g. "src/app" gives every src/app/* its own color.
+    #[arg(
+        long = "color-root",
+        value_name = "FOLDER",
+        help_heading = "Color groups"
+    )]
+    pub color_root: Vec<String>,
+    /// Declare FOLDER as one color module of its own (repeatable), e.g.
+    /// "src/app/shared/ui". Wins over --color-root and auto detection.
+    #[arg(
+        long = "color-module",
+        value_name = "FOLDER",
+        help_heading = "Color groups"
+    )]
+    pub color_module: Vec<String>,
+    /// Don't auto-descend through a dominant folder chain (like src/app) to find
+    /// the level where the tree splits; always color by top-level folder.
+    #[arg(long, help_heading = "Color groups")]
+    pub no_auto_color: bool,
+
     // ---------------- Tiles & minimap ----------------
     /// Hide the minimap lines inside file tiles.
     #[arg(long, help_heading = "Tiles & minimap")]
@@ -303,8 +325,9 @@ pub struct RenderArgs {
     /// Hide folder names.
     #[arg(long, help_heading = "Labels")]
     pub no_dir_names: bool,
-    /// Only label folders up to this depth.
-    #[arg(long, default_value_t = 2, help_heading = "Labels")]
+    /// Only label the top N folder levels (0 = every folder big enough). Folders
+    /// below that reserve no header space.
+    #[arg(long, default_value_t = 0, help_heading = "Labels")]
     pub dir_name_max_depth: u32,
     /// Show file names on sufficiently large tiles.
     #[arg(long, help_heading = "Labels")]
@@ -344,6 +367,10 @@ pub struct RenderArgs {
     /// Beam glow intensity multiplier.
     #[arg(long, default_value_t = 1.0, help_heading = "Avatars & beams")]
     pub beam_intensity: f32,
+    /// Minimum seconds a beam stays visible. Beams otherwise live exactly as
+    /// long as their commit is on screen.
+    #[arg(long, default_value_t = 0.25, help_heading = "Avatars & beams")]
+    pub beam_seconds: f32,
 
     // ---------------- Animation ----------------
     /// Fraction of each commit's interval spent morphing geometry (smooth mode).
@@ -486,6 +513,9 @@ impl RenderArgs {
             margin: self.margin,
             saturation: self.saturation,
             background: parse_hex_color(&self.background)?,
+            color_roots: self.color_root,
+            color_modules: self.color_module,
+            auto_color: !self.no_auto_color,
 
             show_minimap: !self.no_minimap,
             minimap_line_gap: self.minimap_line_gap,
@@ -508,6 +538,7 @@ impl RenderArgs {
             gravatar_timeout_ms: self.gravatar_timeout_ms,
             show_beams: !self.no_beams,
             beam_intensity: self.beam_intensity,
+            beam_seconds: self.beam_seconds,
 
             transition: self.transition,
             highlight_seconds: self.highlight_seconds,

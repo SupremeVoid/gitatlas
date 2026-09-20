@@ -37,7 +37,8 @@ Generate your own with `gitatlas /path/to/repo -o atlas.mp4`.*
 - **Smooth transitions** — added tiles grow in, deleted tiles shrink and fade,
   modified tiles glow; geometry morphs by interpolating between commit states.
 - **Committer avatars + beams** — one avatar per active author, each with its own
-  **unique color** that its beams inherit. Avatars **wander** over the weighted
+  **unique color** that its beams inherit. Beams last exactly as long as their
+  commit is on screen (`--beam-seconds` sets a floor for fast-forwarded repos). Avatars **wander** over the weighted
   centroid of their recent changes, their **name flows beneath them**, and they
   **fade out after 5 s** of video time with no new commit. Avatar image is
   resolved from an **avatar-config file** (`name/email = image`), then an image
@@ -48,9 +49,14 @@ Generate your own with `gitatlas /path/to/repo -o atlas.mp4`.*
 - **Submodules** — git submodules are included by default as small tiles that
   flash when their pointer is bumped; toggle with `--no-submodules` or filter by
   name with `--include-submodule` / `--exclude-submodule`.
-- **Per-root border colors** — every top-level folder gets a stable hue (from a
+- **Per-module border colors** — every top-level folder gets a stable hue (from a
   hash of its name), shared by its whole subtree, matching the reference atlas
-  look.
+  look. If most of the repo sits under one chain such as `src/app/`, gitatlas
+  **auto-descends** to the level where the tree actually splits and colors *those*
+  folders instead (the chain itself turns neutral gray). Steer it by hand with
+  `--color-root FOLDER` (color by that folder's subfolders) and
+  `--color-module FOLDER` (that folder is one color of its own), or switch it off
+  with `--no-auto-color`.
 - **Dedicated meta bar** — commit date, author, subject, counter and file/LoC
   stats live in a reserved bar at the top of the frame (never overlapping the
   atlas); the whole bar is removable with `--no-hud`, and individual parts with
@@ -110,7 +116,7 @@ gitatlas /path/to/repo -o out.mp4 --resolution 1920x1080 --seconds 30 --quality 
 gitatlas /path/to/repo --max-commits 300 --seconds-per-commit 0.4 -o recent.mp4
 
 # WebM/VP9 output, no avatars, deeper folder labels.
-gitatlas . -o atlas.webm --codec webm --no-avatars --dir-name-max-depth 3
+gitatlas . -o atlas.webm --codec webm --no-avatars --dir-name-max-depth 3   # label only the top 3 levels
 ```
 
 ## How it works
@@ -190,9 +196,10 @@ Run `gitatlas --help` for the complete, grouped list. Highlights:
 | Files & folders | `--include GLOB`, `--exclude GLOB` (repeatable; matched against the repo-relative path, exclude wins) |
 | Output/timing | `-o/--out`, `--codec mp4\|webm`, `--quality draft\|balanced\|high`, `--resolution WxH`, `--fps`, `--seconds`, `--seconds-per-commit`, `--threads` |
 | Layout | `--max-depth`, `--depth-mode omit\|collapse`, `--gamma`, `--size-cap`, `--min-open-px`, `--pad`, `--margin`, `--saturation`, `--background #RRGGBB` |
+| Color groups | `--color-root FOLDER`, `--color-module FOLDER` (both repeatable), `--no-auto-color` |
 | Tiles | `--no-minimap`, `--minimap-line-gap`, `--minimap-max-lines`, `--no-border`, `--border-width` |
 | Labels | `--no-dir-names`, `--dir-name-max-depth`, `--file-names`, `--file-name-min-px`, `--label-size` |
-| Avatars/beams | `--no-avatars`, `--no-avatar-names`, `--avatar-size`, `--avatar-config FILE`, `--avatar-dir DIR`, `--gravatar`, `--no-beams`, `--beam-intensity` |
+| Avatars/beams | `--no-avatars`, `--no-avatar-names`, `--avatar-size`, `--avatar-config FILE`, `--avatar-dir DIR`, `--gravatar`, `--no-beams`, `--beam-intensity`, `--beam-seconds` |
 | Animation | `--transition`, `--highlight-seconds`, `--avatar-idle-seconds` |
 | HUD | `--no-hud`, `--no-date`, `--no-author`, `--no-progress`, `--no-langs`, `--title` |
 | Misc | `--config FILE`, `--no-cache`, `--dry-run` |

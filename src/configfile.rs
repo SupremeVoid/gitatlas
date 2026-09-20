@@ -263,6 +263,27 @@ pub fn generate(d: &Config, history: &History) -> String {
         "background RGB 0-255",
     );
 
+    s.push_str(
+        "
+# --- Color groups (which folders get their own border color) ---
+",
+    );
+    line(
+        &mut s,
+        &format!("auto_color = {}", d.auto_color),
+        "descend a dominant chain (e.g. src/app) and color by the level below it",
+    );
+    line(
+        &mut s,
+        "color_roots = []",
+        "color by the subfolders of these, e.g. [\"src/app\"]",
+    );
+    line(
+        &mut s,
+        "color_modules = []",
+        "each of these folders is one color, e.g. [\"src/app/shared/ui\"]",
+    );
+
     s.push_str("\n# --- Tiles & minimap ---\n");
     line(
         &mut s,
@@ -299,7 +320,7 @@ pub fn generate(d: &Config, history: &History) -> String {
     line(
         &mut s,
         &format!("dir_name_max_depth = {}", d.dir_name_max_depth),
-        "label folders up to this depth",
+        "label only the top N folder levels (0 = all)",
     );
     line(
         &mut s,
@@ -362,6 +383,11 @@ pub fn generate(d: &Config, history: &History) -> String {
         &mut s,
         &format!("beam_intensity = {:?}", d.beam_intensity),
         "beam glow multiplier",
+    );
+    line(
+        &mut s,
+        &format!("beam_seconds = {:?}", d.beam_seconds),
+        "min beam visibility (s); beams otherwise last as long as their commit",
     );
 
     s.push_str("\n# --- Animation ---\n");

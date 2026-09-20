@@ -22,6 +22,7 @@ mod easing;
 mod encode;
 mod fmt;
 mod geom;
+mod groups;
 mod ingest;
 mod intern;
 mod lang;
@@ -122,6 +123,7 @@ fn setup_render(
     labels: &HashMap<String, String>,
     images_extra: &HashMap<String, PathBuf>,
     size_cap: f32,
+    colors: groups::ColorMap,
 ) -> (RenderCtx, LayoutParams, Rect) {
     // Merge avatar image sources: config-file committer images, then --avatar-config.
     let mut images = images_extra.clone();
@@ -169,15 +171,18 @@ fn setup_render(
         0.0
     };
 
-    // Precompute the handful of distinct root-folder group colors once.
+    // Precompute the handful of distinct group colors once; folders that span
+    // several groups are neutral gray.
     let mut group_colors = rustc_hash::FxHashMap::default();
-    for p in &history.paths {
-        let root = p.split('/').next().unwrap_or("");
-        let hue = crate::color::hue_from_hash(crate::color::hash_str(root));
+    for &hue in &colors.path_hue {
         group_colors
             .entry(hue.to_bits())
             .or_insert_with(|| crate::color::GroupColor::from_hue(hue, cfg.saturation));
     }
+    group_colors.insert(
+        groups::NEUTRAL_HUE.to_bits(),
+        crate::color::GroupColor::from_hue(0.0, 0.0),
+    );
 
     let ctx = RenderCtx {
         cfg: cfg.clone(),
@@ -187,6 +192,7 @@ fn setup_render(
         bg: cfg.background,
         hud_h,
         group_colors,
+        colors,
     };
     let params = LayoutParams {
         gamma: cfg.gamma,
@@ -199,7 +205,8 @@ fn setup_render(
         } else {
             0.0
         },
-        label_min_px: cfg.label_size + 30.0,
+        label_min_px: cfg.label_min_px(),
+        label_max_depth: cfg.dir_label_depth(),
     };
     let frame_rect = Rect::new(
         cfg.margin,
@@ -271,9 +278,11 @@ fn render(args: cli::RenderArgs) -> Result<()> {
     // Precompute path -> language id once.
     let path_lang = lang::build_path_lang(&history.paths);
 
+    let colors = build_colors(&cfg, &history, &final_state, size_cap);
+
     eprintln!("• building {} avatars ...", history.authors.len());
     let (ctx, params, frame_rect) =
-        setup_render(&cfg, &history, &cfg_labels, &cfg_images, size_cap);
+        setup_render(&cfg, &history, &cfg_labels, &cfg_images, size_cap, colors);
 
     eprintln!("• rendering → {} ...", cfg.out.display());
     let t1 = Instant::now();
@@ -352,13 +361,19 @@ fn snapshot(args: cli::SnapshotArgs) -> Result<()> {
     }
     let langs = lang::top_langs_fl(&lang_lines, &lang_files, 6);
 
+    // Color groups come from the FINAL state, so a still matches the video.
+    for c in &history.commits[idx + 1..] {
+        state.apply(c);
+    }
+    let colors = build_colors(&cfg, &history, &state, size_cap);
+
     eprintln!("• building context ...");
     let (ctx, params, frame_rect) =
-        setup_render(&cfg, &history, &cfg_labels, &cfg_images, size_cap);
+        setup_render(&cfg, &history, &cfg_labels, &cfg_images, size_cap, colors);
 
     // Tree + layout at the target state.
     let collapse = cfg.depth_mode == crate::config::DepthMode::Collapse;
-    let tree = model::build_tree(&snap.files, &history, cfg.max_depth, collapse);
+    let tree = model::build_tree(&snap.files, &history, &ctx.colors, cfg.max_depth, collapse);
     let laid = layout::layout(&tree, frame_rect, &params);
     let kf = std::sync::Arc::new(render::Keyframe {
         k: idx,
@@ -520,10 +535,15 @@ fn gen_config(args: &GenConfigArgs) -> Result<()> {
     let text = configfile::generate(&Config::default(), &history);
     std::fs::write(&args.out, &text)
         .map_err(|e| anyhow::anyhow!("writing {}: {e}", args.out.display()))?;
+    // Report the resolved location, not just the (possibly relative) argument.
+    let full = std::path::absolute(&args.out).unwrap_or_else(|_| args.out.clone());
     eprintln!(
-        "✓ wrote {} ({} committers). Edit labels/images, then: gitatlas --config {} <repo>",
-        args.out.display(),
-        history.authors.len(),
+        "✓ wrote {} ({} committers)",
+        full.display(),
+        history.authors.len()
+    );
+    eprintln!(
+        "  Edit labels/images, then: gitatlas --config {} <repo>",
         args.out.display()
     );
     Ok(())
@@ -637,6 +657,31 @@ fn filter_history(history: &mut History, include: &[String], exclude: &[String])
 }
 
 /// Robust, stable area cap: ~95th percentile of final-state file sizes.
+/// Decide which folders get their own color (see `groups.rs`) from the final
+/// repository state, and say so when auto detection moved off the top level.
+fn build_colors(
+    cfg: &Config,
+    history: &History,
+    final_state: &model::WorldState,
+    size_cap: f32,
+) -> groups::ColorMap {
+    let colors = groups::ColorMap::build(
+        &history.paths,
+        &final_state.snapshot().files,
+        size_cap,
+        &cfg.color_roots,
+        &cfg.color_modules,
+        cfg.auto_color,
+    );
+    if !colors.auto_root.is_empty() {
+        eprintln!(
+            "• colors: most of the repo is under {0}/ — coloring by its subfolders (--no-auto-color to disable)",
+            colors.auto_root
+        );
+    }
+    colors
+}
+
 fn auto_size_cap(state: &model::WorldState, history: &ingest::History) -> f32 {
     let mut sizes: Vec<u32> = Vec::new();
     for pid in 0..history.paths.len() as u32 {

@@ -74,6 +74,15 @@ pub struct Config {
     pub saturation: f32,
     pub background: [u8; 3],
 
+    // ---- color groups ----
+    /// Folders whose direct subfolders each get their own color.
+    pub color_roots: Vec<String>,
+    /// Folders that are one color module of their own.
+    pub color_modules: Vec<String>,
+    /// Auto-descend through a dominant folder chain (e.g. src/app) to find the
+    /// level where the tree actually splits, and color by that level.
+    pub auto_color: bool,
+
     // ---- tiles / minimap ----
     pub show_minimap: bool,
     pub minimap_line_gap: f32,
@@ -98,6 +107,9 @@ pub struct Config {
     pub gravatar_timeout_ms: u64,
     pub show_beams: bool,
     pub beam_intensity: f32,
+    /// Minimum beam visibility in seconds; beams otherwise live exactly as long
+    /// as their commit is on screen.
+    pub beam_seconds: f32,
 
     // ---- animation ----
     /// Fraction of a commit's on-screen time spent in the grow/shrink transition.
@@ -153,6 +165,9 @@ impl Default for Config {
             margin: 8.0,
             saturation: 0.72,
             background: [12, 13, 16],
+            color_roots: Vec::new(),
+            color_modules: Vec::new(),
+            auto_color: true,
 
             show_minimap: true,
             minimap_line_gap: 3.0,
@@ -161,7 +176,7 @@ impl Default for Config {
             border_width: 1.0,
 
             show_dir_names: true,
-            dir_name_max_depth: 2,
+            dir_name_max_depth: 0,
             show_file_names: false,
             file_name_min_px: 42.0,
             label_size: 13.0,
@@ -175,6 +190,7 @@ impl Default for Config {
             gravatar_timeout_ms: 2500,
             show_beams: true,
             beam_intensity: 1.0,
+            beam_seconds: 0.25,
 
             transition: 0.55,
             highlight_seconds: 1.2,
@@ -194,6 +210,20 @@ impl Default for Config {
 
 impl Config {
     /// The git-walk options implied by this config.
+    /// Deepest 0-based folder depth that is labeled (`dir_name_max_depth` counts
+    /// levels, 0 = all).
+    pub fn dir_label_depth(&self) -> u32 {
+        match self.dir_name_max_depth {
+            0 => u32::MAX,
+            n => n - 1,
+        }
+    }
+
+    /// Minimum height of an open folder for it to get a header label.
+    pub fn label_min_px(&self) -> f32 {
+        self.label_size + 30.0
+    }
+
     pub fn ingest_options(&self) -> crate::ingest::IngestOptions {
         crate::ingest::IngestOptions {
             first_parent: self.first_parent,

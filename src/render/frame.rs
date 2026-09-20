@@ -25,6 +25,8 @@ pub struct RenderCtx {
     /// distinct root-folder hues, so this avoids ~4 HSL conversions per tile per
     /// frame).
     pub group_colors: rustc_hash::FxHashMap<u32, GroupColor>,
+    /// Which folder colors each path (see `groups.rs`).
+    pub colors: crate::groups::ColorMap,
 }
 
 impl RenderCtx {
@@ -229,8 +231,9 @@ fn draw_tile(ctx: &RenderCtx, plan: &FramePlan, t: &RTile, pm: &mut Pixmap, pw: 
 
     fill_rect(data, pw, ph, &r, fillc, t.alpha);
 
-    // Minimap lines for files.
-    if cfg.show_minimap && t.is_file && r.h > cfg.minimap_line_gap * 2.0 + 3.0 && r.w > 8.0 {
+    // Minimap lines for files — and for collapsed folders, whose aggregated
+    // line count stands in for the content that is too small to open.
+    if cfg.show_minimap && (t.is_file || t.collapsed) && r.h >= 5.0 && r.w >= 6.0 {
         draw_minimap(data, pw, ph, &r, t, gc.minimap, cfg, t.alpha);
     }
 
@@ -266,7 +269,12 @@ fn draw_tile_label(ctx: &RenderCtx, plan: &FramePlan, t: &RTile, pm: &mut Pixmap
     let ph = pm.height() as i32;
 
     if t.is_dir {
-        if !cfg.show_dir_names || t.depth > cfg.dir_name_max_depth {
+        if !cfg.show_dir_names || t.depth > cfg.dir_label_depth() {
+            return;
+        }
+        // An open folder is labeled exactly when layout reserved its header
+        // strip; otherwise the name would be drawn over its children.
+        if !t.collapsed && r.h < cfg.label_min_px() {
             return;
         }
         let maxw = r.w - cfg.pad * 2.0 - 2.0;
@@ -355,20 +363,19 @@ fn draw_minimap(
     alpha: f32,
 ) {
     let gap = cfg.minimap_line_gap.max(1.5);
-    let top = r.y + 3.0;
-    let avail = r.h - 6.0;
-    if avail < gap {
+    // Small tiles get a tighter inset so they still fit a line or two.
+    let inset = if r.h < 12.0 || r.w < 12.0 { 2.0 } else { 3.0 };
+    let top = r.y + inset;
+    let rows = (((r.h - inset * 2.0) / gap).floor() as u32 + 1).min(cfg.minimap_max_lines);
+    if t.raw_size == 0 || r.h < inset * 2.0 + 1.0 {
         return;
     }
-    let rows = (avail / gap).floor() as u32;
-    // Line count scales with file size (lines of code), capped by rows and the cap.
-    let desired = t.raw_size.min(cfg.minimap_max_lines);
-    let n = desired.min(rows);
-    if n == 0 {
-        return;
-    }
-    // If the file has more lines than rows, compress (each row ~ several lines).
-    let usable_w = r.w - 6.0;
+    // Line count scales with size (lines of code), but never leaves more than
+    // ~40% of the tile blank: tile area is gamma-compressed, so a short file
+    // would otherwise sit as a few lines atop an empty box.
+    let floor = (rows as f32 * 0.6).ceil() as u32;
+    let n = t.raw_size.max(floor).min(rows);
+    let usable_w = r.w - inset * 2.0;
     if usable_w < 2.0 {
         return;
     }
@@ -381,8 +388,8 @@ fn draw_minimap(
         let seed = t.key ^ (i as u64).wrapping_mul(0x9e3779b97f4a7c15);
         let lf = 0.25 + 0.7 * frac01(seed);
         let indent = 0.06 * frac01(seed >> 17);
-        let x0 = (r.x + 3.0 + usable_w * indent) as i32;
-        let x1 = (r.x + 3.0 + usable_w * (indent + lf).min(1.0)) as i32;
+        let x0 = (r.x + inset + usable_w * indent) as i32;
+        let x1 = (r.x + inset + usable_w * (indent + lf).min(1.0)) as i32;
         hline(data, pw, ph, y, x0, x1, color, alpha);
     }
 }

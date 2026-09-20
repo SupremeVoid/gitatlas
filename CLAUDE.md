@@ -60,6 +60,12 @@ render/
             repack premult-RGBA → rgb24
 encode.rs   spawn system ffmpeg once, feed rgb24 over stdin (in order),
             drain stderr on a thread, friendly errors. mp4(x264)/webm(vp9).
+groups.rs   ColorMap (built once from the FINAL state): path id -> group hue.
+            Group = direct subfolder of the deepest "color root" above a file;
+            roots = "" + --color-root (+ancestors) + the auto-detected dominant
+            chain (child >= 70% of parent's capped lines); --color-module folders
+            are their own group. Root dirs get NEUTRAL_HUE (gray). Lives in
+            RenderCtx.colors; build_tree takes it.
 color.rs    stable hue from folder-name hash → per-root border/fill/minimap colors
 config.rs   resolved Config (all options).
 configfile.rs  gen-config writes a fully-commented TOML (all options at default +

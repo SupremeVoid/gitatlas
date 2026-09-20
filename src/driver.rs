@@ -42,6 +42,7 @@ struct TimeMap {
     max_hold: f64,
     hold_frames: f64,
     avatar_life: f64,
+    beam_life: f64,
     fps: f64,
     frame_x: f32,
     frame_y: f32,
@@ -78,6 +79,10 @@ pub fn run(
     let transition = cfg.transition.clamp(0.05, 1.0) as f64;
     let hold_frames = (cfg.highlight_seconds * cfg.fps as f32) as f64;
     let avatar_life = frames_per_commit.max((cfg.avatar_idle_seconds * cfg.fps as f32) as f64);
+    // A beam lives exactly as long as its commit is on screen (with a small
+    // floor so it still registers when fast-forwarding), unlike the avatar,
+    // which lingers.
+    let beam_life = frames_per_commit.max((cfg.beam_seconds.max(0.0) * cfg.fps as f32) as f64);
     let max_hold = hold_frames.max(avatar_life);
 
     let tm = TimeMap {
@@ -87,6 +92,7 @@ pub fn run(
         max_hold,
         hold_frames,
         avatar_life,
+        beam_life,
         fps: cfg.fps as f64,
         frame_x: frame_rect.x,
         frame_y: frame_rect.y,
@@ -156,7 +162,7 @@ pub fn run(
             .par_iter()
             .map(|(k, snap)| {
                 let collapse = cfg.depth_mode == crate::config::DepthMode::Collapse;
-                let tree = build_tree(&snap.files, history, cfg.max_depth, collapse);
+                let tree = build_tree(&snap.files, history, &ctx.colors, cfg.max_depth, collapse);
                 let lay: Layout = layout(&tree, frame_rect, params);
                 // Language split for the HUD (cheap array sum over present files).
                 let mut lang_lines = vec![0u64; crate::lang::LANGS.len()];
@@ -268,6 +274,7 @@ fn build_plan(
             // Fade in quickly (~0.35s), hold, fade out over the idle tail (~1.6s).
             let alpha = life_alpha(age, tm.avatar_life, tm.fps * 0.35, tm.fps * 1.6) as f32;
             let hl = life_alpha(age, tm.hold_frames, tm.fps * 0.08, tm.hold_frames * 0.55) as f32;
+            let beam = life_alpha(age, tm.beam_life, tm.fps * 0.06, tm.fps * 0.2) as f32;
             let recency = 1.0 - (age / tm.max_hold).clamp(0.0, 1.0) as f32;
             let commit = &history.commits[c];
             let hue = ctx
@@ -295,8 +302,13 @@ fn build_plan(
                     a.sx += cx * wgt;
                     a.sy += cy * wgt;
                     a.sw += wgt;
-                    if a.targets.len() < BEAMS_PER_AUTHOR {
-                        a.targets.push((cx, cy, recency));
+                    // One beam per drawn tile: files under the same collapsed
+                    // folder would otherwise stack additively into a white bar.
+                    if beam > 0.02
+                        && a.targets.len() < BEAMS_PER_AUTHOR
+                        && !a.targets.iter().any(|t| t.0 == cx && t.1 == cy)
+                    {
+                        a.targets.push((cx, cy, beam));
                     }
                     let e = changed.entry(key).or_insert(ChangeGlow {
                         intensity: 0.0,
@@ -349,7 +361,7 @@ fn build_plan(
             alpha: a.alpha,
         });
         if tm.show_beams && beams.len() < MAX_BEAMS {
-            for (tx, ty, rec) in a.targets.iter() {
+            for (tx, ty, beam) in a.targets.iter() {
                 if beams.len() >= MAX_BEAMS {
                     break;
                 }
@@ -359,7 +371,7 @@ fn build_plan(
                     x1: *tx,
                     y1: *ty,
                     hue: a.hue,
-                    intensity: a.alpha * (0.35 + 0.65 * rec),
+                    intensity: beam * (0.4 + 0.6 * a.alpha),
                 });
             }
         }

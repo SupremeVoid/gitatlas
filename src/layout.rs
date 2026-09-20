@@ -29,6 +29,9 @@ pub struct LayoutParams {
     pub label_h: f32,
     /// Only reserve label space if the folder is at least this tall.
     pub label_min_px: f32,
+    /// Deepest folder depth (0-based) that gets a label; deeper folders reserve
+    /// no label strip, so they never show an empty header.
+    pub label_max_depth: u32,
 }
 
 impl Default for LayoutParams {
@@ -41,6 +44,7 @@ impl Default for LayoutParams {
             pad: 3.0,
             label_h: 14.0,
             label_min_px: 46.0,
+            label_max_depth: u32::MAX,
         }
     }
 }
@@ -181,7 +185,7 @@ fn lay_node(
 
     // Reserve padding and optional label space, then recurse.
     let mut inner = rect.inset(p.pad);
-    if p.label_h > 0.0 && rect.h >= p.label_min_px {
+    if p.label_h > 0.0 && rect.h >= p.label_min_px && node.depth <= p.label_max_depth {
         inner.y += p.label_h;
         inner.h = (inner.h - p.label_h).max(0.0);
     }
@@ -327,7 +331,13 @@ mod tests {
     fn layout_is_deterministic() {
         let h = hist(&["src/a.rs", "src/b.rs", "tests/c.rs"]);
         let files = vec![(0u32, 10u32), (1u32, 20u32), (2u32, 5u32)];
-        let tree = build_tree(&files, &h, 0, false);
+        let tree = build_tree(
+            &files,
+            &h,
+            &crate::groups::ColorMap::top_level(&h.paths),
+            0,
+            false,
+        );
         let p = LayoutParams::default();
         let frame = Rect::new(0.0, 0.0, 800.0, 600.0);
         let l1 = layout(&tree, frame, &p);
