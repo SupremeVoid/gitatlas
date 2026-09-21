@@ -31,7 +31,7 @@ pub enum DepthMode {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(default)]
+#[serde(default, deny_unknown_fields)]
 pub struct Config {
     // ---- input ----
     pub repo: PathBuf,
@@ -67,6 +67,9 @@ pub struct Config {
     pub max_depth: u32,
     pub depth_mode: DepthMode,
     pub gamma: f32,
+    /// Folder balancing 0..0.9: compresses how area is split among sibling
+    /// folders so small modules stay visible (0 = strictly proportional).
+    pub balance: f32,
     pub size_cap: Option<f32>, // None => auto from final state percentile
     pub min_open_px: f32,
     pub pad: f32,
@@ -128,6 +131,9 @@ pub struct Config {
 
     // ---- misc ----
     pub cache: bool,
+    /// Start a windowed walk (--since, --max-commits, …) from the repository as
+    /// it already was, instead of from an empty map.
+    pub baseline: bool,
 }
 
 impl Default for Config {
@@ -150,7 +156,7 @@ impl Default for Config {
             quality: Quality::Balanced,
             width: 2560,
             height: 1440,
-            fps: 60,
+            fps: 30,
             seconds: Some(60.0),
             seconds_per_commit: None,
             max_frames: 0,
@@ -159,6 +165,7 @@ impl Default for Config {
             max_depth: 0,
             depth_mode: DepthMode::Omit,
             gamma: 0.5,
+            balance: 0.25,
             size_cap: None,
             min_open_px: 34.0,
             pad: 3.0,
@@ -204,6 +211,7 @@ impl Default for Config {
             title: None,
 
             cache: true,
+            baseline: true,
         }
     }
 }

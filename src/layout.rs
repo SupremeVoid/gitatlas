@@ -16,6 +16,8 @@ use crate::model::Tree;
 pub struct LayoutParams {
     /// Gamma compression exponent for the area metric (0.5 ≈ sqrt).
     pub gamma: f32,
+    /// Folder balancing 0..0.9 (see `balanced_shares`); 0 disables it.
+    pub balance: f32,
     /// Minimum weight floor (in "lines") so tiny files stay visible.
     pub min_weight: f32,
     /// Cap on the area metric (stable, computed once globally) so one huge file
@@ -38,6 +40,7 @@ impl Default for LayoutParams {
     fn default() -> Self {
         LayoutParams {
             gamma: 0.5,
+            balance: 0.0,
             min_weight: 1.0,
             size_cap: 4000.0,
             min_open_px: 34.0,
@@ -122,6 +125,45 @@ pub fn layout(tree: &Tree, frame: Rect, p: &LayoutParams) -> Layout {
     out
 }
 
+/// Sibling weights with folder balancing applied.
+///
+/// `weights` holds true (proportional) subtree sums. With `balance` b > 0 each
+/// sibling folder's share becomes `sum^(1-b)`: a module 100x the size of its
+/// neighbour gets ~32x the area at b = 0.25 instead of 100x, so big modules stop
+/// crowding out small ones. Only the split among siblings is compressed — a
+/// parent still uses its true sum one level up, so the effect does not compound
+/// with depth. A folder's loose files count as ONE sibling (their combined sum,
+/// split proportionally), otherwise hundreds of small files would each be
+/// boosted and swamp the folders. Pure function of the tree, so still stable.
+fn balanced_shares(tree: &Tree, children: &[u32], weights: &[f32], balance: f32) -> Vec<f32> {
+    let b = balance.clamp(0.0, 0.9);
+    if b <= 0.0 {
+        return children.iter().map(|&c| weights[c as usize]).collect();
+    }
+    let e = 1.0 - b;
+    let files_sum: f32 = children
+        .iter()
+        .filter(|&&c| !tree.nodes[c as usize].is_dir)
+        .map(|&c| weights[c as usize])
+        .sum();
+    let file_scale = if files_sum > 0.0 {
+        files_sum.powf(e) / files_sum
+    } else {
+        0.0
+    };
+    children
+        .iter()
+        .map(|&c| {
+            let w = weights[c as usize];
+            if tree.nodes[c as usize].is_dir {
+                w.powf(e)
+            } else {
+                w * file_scale
+            }
+        })
+        .collect()
+}
+
 fn lay_children(
     tree: &Tree,
     parent: u32,
@@ -134,7 +176,7 @@ fn lay_children(
     if children.is_empty() || rect.w <= 0.5 || rect.h <= 0.5 {
         return;
     }
-    let child_weights: Vec<f32> = children.iter().map(|&c| weights[c as usize]).collect();
+    let child_weights = balanced_shares(tree, children, weights, p.balance);
     let rects = squarified_ordered(rect, &child_weights);
 
     for (&cidx, crect) in children.iter().zip(rects.iter()) {
@@ -324,6 +366,7 @@ mod tests {
             paths: paths.iter().map(|s| s.to_string()).collect(),
             authors: vec![],
             commits: vec![],
+            baseline: vec![],
         }
     }
 
@@ -348,5 +391,49 @@ mod tests {
             assert_eq!(a.key, b.key);
             assert_eq!(a.rect, b.rect);
         }
+    }
+
+    #[test]
+    fn balance_shrinks_dominant_folder_but_keeps_order() {
+        // `big` holds 100x the lines of `small`, plus many loose root files.
+        let mut paths = vec!["big/a.rs".to_string(), "small/b.rs".to_string()];
+        let mut files = vec![(0u32, 100_000u32), (1u32, 1_000u32)];
+        for i in 0..50u32 {
+            paths.push(format!("f{i}.txt"));
+            files.push((i + 2, 10));
+        }
+        let h = History {
+            paths,
+            authors: vec![],
+            commits: vec![],
+            baseline: vec![],
+        };
+        let tree = build_tree(
+            &files,
+            &h,
+            &crate::groups::ColorMap::top_level(&h.paths),
+            0,
+            false,
+        );
+        let frame = Rect::new(0.0, 0.0, 1000.0, 1000.0);
+        let area = |balance: f32, name: &str| {
+            let p = LayoutParams {
+                balance,
+                size_cap: 1e9,
+                gamma: 1.0,
+                ..LayoutParams::default()
+            };
+            let l = layout(&tree, frame, &p);
+            let t = l.get(crate::color::hash_str(name)).expect("tile");
+            t.rect.w * t.rect.h
+        };
+        let (big0, small0) = (area(0.0, "big"), area(0.0, "small"));
+        let (big1, small1) = (area(0.5, "big"), area(0.5, "small"));
+        assert!((big0 / small0 - 100.0).abs() < 5.0, "proportional when off");
+        assert!(big1 < big0 && small1 > small0, "balance evens siblings out");
+        assert!(big1 > small1, "the bigger folder stays bigger");
+        // Loose files act as one sibling: 50 tiny files must not swamp `small`.
+        let loose: f32 = (0..50).map(|i| area(0.5, &format!("f{i}.txt"))).sum();
+        assert!(loose < small1);
     }
 }

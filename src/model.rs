@@ -16,12 +16,21 @@ pub struct WorldState {
 }
 
 impl WorldState {
+    /// The state before the first commit: empty, or — for a windowed walk —
+    /// everything that already existed (`History::baseline`).
     pub fn new(history: &History) -> Self {
-        WorldState {
+        let mut st = WorldState {
             size: vec![-1; history.paths.len()],
             present_files: 0,
             total_lines: 0,
+        };
+        for &(path, lines) in &history.baseline {
+            let lines = lines.min(i32::MAX as u32);
+            st.size[path as usize] = lines as i32;
+            st.present_files += 1;
+            st.total_lines += lines as u64;
         }
+        st
     }
 
     #[inline]
@@ -325,6 +334,7 @@ mod tests {
                 email: "a@x".into(),
             }],
             commits: vec![],
+            baseline: vec![],
         }
     }
     fn commit(changes: Vec<FileDelta>) -> Commit {

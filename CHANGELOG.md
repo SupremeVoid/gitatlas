@@ -3,6 +3,31 @@
 All notable changes to gitatlas are documented here. This project adheres to
 [Semantic Versioning](https://semver.org/).
 
+## 1.2.0
+
+- **Folder balancing (`--balance`, default 0.25).** The split of area among
+  sibling folders is compressed (`size^(1-balance)`), so a dominant module no
+  longer squeezes the rest of a monorepo into specks — without excluding
+  anything. It uses true sizes at each level (no compounding with depth) and
+  treats a folder's loose files as one sibling. `--balance 0` restores strictly
+  proportional areas.
+- Default frame rate is now **30 fps** (was 60); pass `--fps 60` for the old look.
+- **Windowed renders start from the existing repository.** With `--since`,
+  `--max-commits` or a rev range, the map now opens with everything that already
+  existed before the first commit (read from that commit's parent tree) instead
+  of only growing the files the window happens to touch. File/LoC totals, the
+  language split, auto size cap and color groups are correct from frame one.
+  `--empty-start` (config: `baseline = false`) restores the old behavior. The
+  history cache format changed, so the first run re-reads git once.
+- **Path filters can no longer fail silently.** `--include` / `--exclude` always
+  report how many paths were kept, and warn about any glob that matches nothing.
+  Globs are now case-insensitive (`*.json` also drops `X.JSON`, like language
+  detection), and literal quotes passed through by the shell (cmd.exe `'…'`) are
+  stripped.
+- Config files reject unknown keys, so a misspelled or misplaced option (e.g.
+  `exclude` written below a `[[committer]]` block) is an error instead of being
+  ignored.
+
 ## 1.1.0
 
 - **Color groups.** Repos that keep nearly everything under one chain (e.g.

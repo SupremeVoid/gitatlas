@@ -69,6 +69,14 @@ Generate your own with `gitatlas /path/to/repo -o atlas.mp4`.*
 - **Depth control** — `--max-depth N` caps folder nesting; `--depth-mode` chooses
   what happens to deeper items: `omit` (default) drops them for a clean shallow
   map, or `collapse` merges each too-deep subfolder into a single aggregate tile.
+- **Folder balancing** — in a monorepo one huge module would normally take most
+  of the map. `--balance` (default 0.25) compresses how area is split among
+  sibling folders, so big modules stay biggest but small ones remain readable —
+  no need to exclude anything. `--balance 0` is strictly proportional.
+- **Time windows start from the real repo** — with `--since` / `--max-commits`
+  the video opens on the repository as it already was before the first commit
+  in the window, then animates only what changes (`--empty-start` to grow it
+  from nothing instead).
 - **Adapts to repo size** — maps commits onto the target video length. Long
   videos / small repos animate each commit ("smooth"); huge repos fast-forward
   gracefully with recent-activity highlights.
@@ -192,10 +200,10 @@ Run `gitatlas --help` for the complete, grouped list. Highlights:
 
 | Area | Flags |
 |------|-------|
-| Git & input | `--rev`, `--since`, `--until`, `--max-commits`, `--full-history`, `--no-submodules`, `--include-submodule NAME`, `--exclude-submodule NAME` |
+| Git & input | `--rev`, `--since`, `--until`, `--max-commits`, `--empty-start`, `--full-history`, `--no-submodules`, `--include-submodule NAME`, `--exclude-submodule NAME` |
 | Files & folders | `--include GLOB`, `--exclude GLOB` (repeatable; matched against the repo-relative path, exclude wins) |
 | Output/timing | `-o/--out`, `--codec mp4\|webm`, `--quality draft\|balanced\|high`, `--resolution WxH`, `--fps`, `--seconds`, `--seconds-per-commit`, `--threads` |
-| Layout | `--max-depth`, `--depth-mode omit\|collapse`, `--gamma`, `--size-cap`, `--min-open-px`, `--pad`, `--margin`, `--saturation`, `--background #RRGGBB` |
+| Layout | `--max-depth`, `--depth-mode omit\|collapse`, `--balance`, `--gamma`, `--size-cap`, `--min-open-px`, `--pad`, `--margin`, `--saturation`, `--background #RRGGBB` |
 | Color groups | `--color-root FOLDER`, `--color-module FOLDER` (both repeatable), `--no-auto-color` |
 | Tiles | `--no-minimap`, `--minimap-line-gap`, `--minimap-max-lines`, `--no-border`, `--border-width` |
 | Labels | `--no-dir-names`, `--dir-name-max-depth`, `--file-names`, `--file-name-min-px`, `--label-size` |

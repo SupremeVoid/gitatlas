@@ -34,14 +34,21 @@ ingest.rs   git log --raw --numstat (one stream)  → History{paths, authors, co
               include/exclude filters
 lang.rs     extension -> language id + color (LANGS table); build_path_lang once,
             per-keyframe line totals feed the HUD language split
-cache.rs    binary (de)serialize History, keyed by HEAD+opts
+            - baseline: for a windowed walk (first commit has a parent), the
+              parent's tree is read via `git diff-tree <empty-tree> <parent>
+              --raw --numstat` and fed through the SAME parser as a pseudo-commit
+              -> History.baseline [(path id, lines)]; WorldState::new seeds from
+              it. --empty-start / baseline=false clears it after load.
+cache.rs    binary (de)serialize History (incl. baseline), keyed by HEAD+opts
 model.rs    WorldState: path_id -> line count, advanced per commit (apply())
             snapshot() → StateSnapshot; build_tree(files,…,collapse) → Tree (arena).
             max_depth cutoff: omit (drop deeper files) or collapse (deeper
             subfolders become childless aggregate Dir nodes; layout renders any
             childless dir as a collapsed tile).
 layout.rs   ordered "squarified strip" treemap (STABLE: name-sorted siblings,
-            recursive containment, LOD folder collapse). layout(tree,rect,params)→Layout
+            recursive containment, LOD folder collapse). balanced_shares():
+            sibling dirs split area by sum^(1-balance) on TRUE sums (no depth
+            compounding; loose files = one bucket). layout(tree,rect,params)→Layout
 driver.rs   the orchestrator. Chunked pipeline:
               1. sequentially advance state + snapshot the states a chunk needs
               2. PARALLEL build keyframes (tree+layout) from snapshots

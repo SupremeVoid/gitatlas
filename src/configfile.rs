@@ -16,6 +16,9 @@ use crate::config::Config;
 use crate::ingest::History;
 
 #[derive(Deserialize, Default)]
+// Unknown keys are errors: a misspelled or misplaced option (e.g. `exclude`
+// written below a [[committer]] block) must not be ignored silently.
+#[serde(deny_unknown_fields)]
 struct ConfigFile {
     #[serde(default)]
     options: Config,
@@ -24,6 +27,7 @@ struct ConfigFile {
 }
 
 #[derive(Deserialize, Default, Clone)]
+#[serde(deny_unknown_fields)]
 struct Committer {
     #[serde(rename = "match", default)]
     match_key: String,
@@ -228,6 +232,11 @@ pub fn generate(d: &Config, history: &History) -> String {
         &mut s,
         &format!("gamma = {:?}", d.gamma),
         "area gamma 0.3..1.0 (lower = flatter sizes)",
+    );
+    line(
+        &mut s,
+        &format!("balance = {:?}", d.balance),
+        "sibling-folder balancing 0..0.9 (0 = proportional; higher evens out big vs small)",
     );
     comment(
         &mut s,
@@ -440,6 +449,11 @@ pub fn generate(d: &Config, history: &History) -> String {
         &mut s,
         &format!("cache = {}", d.cache),
         "use the on-disk history cache",
+    );
+    line(
+        &mut s,
+        &format!("baseline = {}", d.baseline),
+        "windowed walks (since/max_commits) start from the existing repo, not empty",
     );
 
     // Committers.

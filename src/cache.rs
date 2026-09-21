@@ -10,7 +10,7 @@ use anyhow::Result;
 
 use crate::ingest::{Author, Commit, FileDelta, History, IngestOptions};
 
-const MAGIC: &[u8; 8] = b"GATLAS\x01\x00";
+const MAGIC: &[u8; 8] = b"GATLAS\x02\x00";
 
 fn cache_path(repo: &Path) -> PathBuf {
     repo.join(".git").join("gitatlas-history.bin")
@@ -97,10 +97,16 @@ pub fn load(repo: &Path, opts: &IngestOptions) -> Option<History> {
             changes,
         });
     }
+    let nb = r.u32()? as usize;
+    let mut baseline = Vec::with_capacity(nb);
+    for _ in 0..nb {
+        baseline.push((r.u32()?, r.u32()?));
+    }
     Some(History {
         paths,
         authors,
         commits,
+        baseline,
     })
 }
 
@@ -140,6 +146,11 @@ pub fn save(repo: &Path, opts: &IngestOptions, history: &History) -> Result<()> 
                 crate::ingest::ChangeKind::Deleted => 2,
             });
         }
+    }
+    w.u32(history.baseline.len() as u32);
+    for &(path, lines) in &history.baseline {
+        w.u32(path);
+        w.u32(lines);
     }
     // Write atomically-ish: temp then rename.
     let path = cache_path(repo);

@@ -54,6 +54,10 @@ pub struct History {
     pub authors: Vec<Author>,
     /// Commits in chronological order (oldest first).
     pub commits: Vec<Commit>,
+    /// `(path id, lines)` of every file that already existed before the first
+    /// commit of a windowed walk (`--since`, `--max-commits`, a rev range): the
+    /// tree of that commit's parent. Empty when the walk starts at a root commit.
+    pub baseline: Vec<(u32, u32)>,
 }
 
 /// Options controlling the git walk.
@@ -187,7 +191,63 @@ pub fn ingest(repo_path: &Path, opts: &IngestOptions) -> Result<History> {
     }
     let _ = err_handle.join();
 
-    Ok(parser.finish())
+    let baseline = match parser.commits.first().map(|c| c.hash.clone()) {
+        Some(first) => read_baseline(repo_path, &first, &mut parser)?,
+        None => Vec::new(),
+    };
+    let mut history = parser.finish();
+    history.baseline = baseline;
+    Ok(history)
+}
+
+/// The repository as it stood just before `first` (its first parent), read as a
+/// diff against the empty tree so it flows through the very same parser — binary
+/// files, submodule filters and line counts behave exactly as in the walk.
+fn read_baseline(repo_path: &Path, first: &str, parser: &mut Parser) -> Result<Vec<(u32, u32)>> {
+    let git = |args: &[&str]| -> Option<Vec<u8>> {
+        let out = Command::new("git")
+            .arg("-C")
+            .arg(repo_path)
+            .args(["-c", "core.quotepath=false"])
+            .args(args)
+            .stdin(Stdio::null())
+            .output()
+            .ok()?;
+        out.status.success().then_some(out.stdout)
+    };
+    let text = |b: Vec<u8>| String::from_utf8_lossy(&b).trim().to_string();
+
+    // A root commit has no parent: the walk already starts from nothing.
+    let Some(parent) = git(&["rev-parse", "--verify", "-q", &format!("{first}^")]).map(text) else {
+        return Ok(Vec::new());
+    };
+    let empty_tree = git(&["hash-object", "-t", "tree", "--stdin"])
+        .map(text)
+        .context("git hash-object (empty tree) failed")?;
+    let diff = git(&[
+        "diff-tree",
+        "-r",
+        "--no-renames",
+        "--raw",
+        "--numstat",
+        &empty_tree,
+        &parent,
+    ])
+    .context("git diff-tree (baseline state) failed")?;
+
+    parser.begin_baseline();
+    for line in diff.split(|&b| b == b'\n') {
+        let line = line.strip_suffix(b"\r").unwrap_or(line);
+        parser.feed(line);
+    }
+    parser.flush_commit();
+    let pseudo = parser.commits.pop().expect("baseline pseudo-commit");
+    Ok(pseudo
+        .changes
+        .into_iter()
+        .filter(|ch| ch.kind != ChangeKind::Deleted)
+        .map(|ch| (ch.path, ch.added))
+        .collect())
 }
 
 /// Read from `r` into `buf` until (and including) `delim`, byte-oriented so that
@@ -283,6 +343,18 @@ impl Parser {
         } else {
             self.parse_numstat(line);
         }
+    }
+
+    /// Open a pseudo-commit that collects the baseline diff (no author/subject).
+    fn begin_baseline(&mut self) {
+        self.flush_commit();
+        self.cur_hash.clear();
+        self.cur_subject.clear();
+        self.cur_author = 0;
+        self.cur_time = 0;
+        self.raw.clear();
+        self.numstat.clear();
+        self.have_commit = true;
     }
 
     fn start_commit(&mut self, rest: &[u8]) {
@@ -456,6 +528,7 @@ impl Parser {
             paths: self.paths.into_names(),
             authors: self.author_meta,
             commits: self.commits,
+            baseline: Vec::new(),
         }
     }
 }

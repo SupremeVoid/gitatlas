@@ -196,6 +196,7 @@ fn setup_render(
     };
     let params = LayoutParams {
         gamma: cfg.gamma,
+        balance: cfg.balance,
         min_weight: 1.0,
         size_cap,
         min_open_px: cfg.min_open_px,
@@ -233,15 +234,10 @@ fn render(args: cli::RenderArgs) -> Result<()> {
 
     let opts = cfg.ingest_options();
     let mut history = load_history(&cfg.repo, &opts, cfg.cache)?;
-    let dropped = filter_history(&mut history, &cfg.include, &cfg.exclude)?;
-    if dropped > 0 {
-        eprintln!(
-            "• path filter: {} include / {} exclude globs, {} change records dropped",
-            cfg.include.len(),
-            cfg.exclude.len(),
-            dropped
-        );
+    if !cfg.baseline {
+        history.baseline.clear();
     }
+    filter_history(&mut history, &cfg.include, &cfg.exclude)?;
 
     // Final-state pass for stats + auto size cap.
     let mut final_state = model::WorldState::new(&history);
@@ -334,6 +330,9 @@ fn snapshot(args: cli::SnapshotArgs) -> Result<()> {
 
     let opts = cfg.ingest_options();
     let mut history = load_history(&cfg.repo, &opts, cfg.cache)?;
+    if !cfg.baseline {
+        history.baseline.clear();
+    }
     filter_history(&mut history, &cfg.include, &cfg.exclude)?;
     let n = history.commits.len();
 
@@ -617,9 +616,25 @@ fn build_globset(pats: &[String]) -> Result<Option<GlobSet>> {
     }
     let mut b = GlobSetBuilder::new();
     for p in pats {
-        b.add(Glob::new(p).map_err(|e| anyhow::anyhow!("bad glob '{p}': {e}"))?);
+        b.add(build_glob(p)?);
     }
     Ok(Some(b.build()?))
+}
+
+/// One path glob. Case-insensitive (so `*.json` also catches `X.JSON`, matching
+/// how languages are detected), and tolerant of quotes that a shell passed
+/// through literally (cmd.exe does not strip '...').
+fn build_glob(p: &str) -> Result<Glob> {
+    let t = p.trim();
+    let t = t
+        .strip_prefix('\'')
+        .and_then(|s| s.strip_suffix('\''))
+        .or_else(|| t.strip_prefix('"').and_then(|s| s.strip_suffix('"')))
+        .unwrap_or(t);
+    globset::GlobBuilder::new(t)
+        .case_insensitive(true)
+        .build()
+        .map_err(|e| anyhow::anyhow!("bad glob '{p}': {e}"))
 }
 
 /// Apply file/folder include/exclude globs, dropping changes for paths that don't
@@ -647,16 +662,36 @@ fn filter_history(history: &mut History, include: &[String], exclude: &[String])
             true
         })
         .collect();
+    history.baseline.retain(|&(path, _)| allowed[path as usize]);
     let mut removed = 0usize;
     for c in &mut history.commits {
         let before = c.changes.len();
         c.changes.retain(|ch| allowed[ch.path as usize]);
         removed += before - c.changes.len();
     }
+
+    // Always say what the filters did: a glob that matches nothing (typo, shell
+    // quoting, wrong separator) would otherwise fail silently.
+    let kept = allowed.iter().filter(|a| **a).count();
+    eprintln!(
+        "• path filter: {} include / {} exclude globs → {} of {} paths kept, {} change records dropped",
+        include.len(),
+        exclude.len(),
+        commafy(kept as u64),
+        commafy(allowed.len() as u64),
+        commafy(removed as u64)
+    );
+    for (kind, pats) in [("include", include), ("exclude", exclude)] {
+        for p in pats {
+            let m = build_glob(p)?.compile_matcher();
+            if !history.paths.iter().any(|path| m.is_match(path.as_str())) {
+                eprintln!("  ! warning: --{kind} \"{p}\" matches no file in this repository");
+            }
+        }
+    }
     Ok(removed)
 }
 
-/// Robust, stable area cap: ~95th percentile of final-state file sizes.
 /// Decide which folders get their own color (see `groups.rs`) from the final
 /// repository state, and say so when auto detection moved off the top level.
 fn build_colors(
@@ -682,6 +717,7 @@ fn build_colors(
     colors
 }
 
+/// Robust, stable area cap: ~95th percentile of final-state file sizes.
 fn auto_size_cap(state: &model::WorldState, history: &ingest::History) -> f32 {
     let mut sizes: Vec<u32> = Vec::new();
     for pid in 0..history.paths.len() as u32 {

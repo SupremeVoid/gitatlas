@@ -196,6 +196,10 @@ pub struct RenderArgs {
         help_heading = "Git & input"
     )]
     pub exclude_submodule: Vec<String>,
+    /// With --since / --max-commits / a rev range, start from an empty map
+    /// instead of the repository as it already was before the first commit.
+    #[arg(long, help_heading = "Git & input")]
+    pub empty_start: bool,
 
     // ---------------- Files & folders ----------------
     /// Only visualize files whose path matches GLOB (repeatable). Globs are
@@ -237,7 +241,7 @@ pub struct RenderArgs {
     #[arg(long, default_value_t = 1440, help_heading = "Output & timing")]
     pub height: u32,
     /// Frames per second.
-    #[arg(long, default_value_t = 60, help_heading = "Output & timing")]
+    #[arg(long, default_value_t = 30, help_heading = "Output & timing")]
     pub fps: u32,
     /// Target video length in seconds.
     #[arg(long, default_value_t = 60.0, help_heading = "Output & timing")]
@@ -263,6 +267,11 @@ pub struct RenderArgs {
     /// Area-metric gamma compression exponent (0.3..1.0; lower = flatter sizes).
     #[arg(long, default_value_t = 0.5, help_heading = "Layout")]
     pub gamma: f32,
+    /// Balance sibling folders (0..0.9). 0 = area strictly proportional to size;
+    /// higher gives dominant folders less and small ones more, so no module ends
+    /// up a speck (0.25: a folder 100x its neighbour gets ~32x the area).
+    #[arg(long, default_value_t = 0.25, help_heading = "Layout")]
+    pub balance: f32,
     /// Fixed area-metric cap in lines (default: auto = 95th percentile).
     #[arg(long, help_heading = "Layout")]
     pub size_cap: Option<f32>,
@@ -507,6 +516,7 @@ impl RenderArgs {
                 DepthModeArg::Collapse => DepthMode::Collapse,
             },
             gamma: self.gamma,
+            balance: self.balance,
             size_cap: self.size_cap,
             min_open_px: self.min_open_px,
             pad: self.pad,
@@ -552,6 +562,7 @@ impl RenderArgs {
             title: self.title,
 
             cache: !self.no_cache,
+            baseline: !self.empty_start,
         })
     }
 }
