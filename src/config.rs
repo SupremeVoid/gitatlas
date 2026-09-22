@@ -40,7 +40,10 @@ pub struct Config {
     pub until: Option<String>,
     pub max_commits: usize,
     pub first_parent: bool,
-    pub submodules: bool,
+    /// Levels of submodules merged in (0 = none, 1 = direct, 2 = nested, ...).
+    /// Also accepts the old `submodules = true/false` (= 1 / 0).
+    #[serde(alias = "submodules", deserialize_with = "de_submodule_depth")]
+    pub submodule_depth: u32,
     pub submodule_include: Vec<String>,
     pub submodule_exclude: Vec<String>,
 
@@ -85,6 +88,8 @@ pub struct Config {
     /// Auto-descend through a dominant folder chain (e.g. src/app) to find the
     /// level where the tree actually splits, and color by that level.
     pub auto_color: bool,
+    /// Give every merged submodule its own color (as if it were a color module).
+    pub submodule_colors: bool,
 
     // ---- tiles / minimap ----
     pub show_minimap: bool,
@@ -145,7 +150,7 @@ impl Default for Config {
             until: None,
             max_commits: 0,
             first_parent: true,
-            submodules: true,
+            submodule_depth: 1,
             submodule_include: Vec::new(),
             submodule_exclude: Vec::new(),
             include: Vec::new(),
@@ -175,6 +180,7 @@ impl Default for Config {
             color_roots: Vec::new(),
             color_modules: Vec::new(),
             auto_color: true,
+            submodule_colors: true,
 
             show_minimap: true,
             minimap_line_gap: 3.0,
@@ -239,7 +245,7 @@ impl Config {
             until: self.until.clone(),
             max_commits: self.max_commits,
             rev: self.rev.clone(),
-            submodules: self.submodules,
+            submodule_depth: self.submodule_depth,
             submodule_include: self.submodule_include.clone(),
             submodule_exclude: self.submodule_exclude.clone(),
         }
@@ -261,5 +267,33 @@ impl Config {
             f = self.max_frames;
         }
         f
+    }
+}
+
+/// `submodule_depth = N`, or the pre-1.3 boolean `submodules = true|false`.
+fn de_submodule_depth<'de, D: serde::Deserializer<'de>>(d: D) -> Result<u32, D::Error> {
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum DepthOrFlag {
+        Depth(u32),
+        Flag(bool),
+    }
+    Ok(match DepthOrFlag::deserialize(d)? {
+        DepthOrFlag::Depth(n) => n,
+        DepthOrFlag::Flag(b) => b as u32,
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn submodule_depth_accepts_old_boolean_key() {
+        let depth = |t: &str| toml::from_str::<Config>(t).unwrap().submodule_depth;
+        assert_eq!(depth("submodule_depth = 3"), 3);
+        assert_eq!(depth("submodules = true"), 1);
+        assert_eq!(depth("submodules = false"), 0);
+        assert_eq!(depth(""), 1);
     }
 }

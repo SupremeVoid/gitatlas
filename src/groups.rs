@@ -112,15 +112,35 @@ impl ColorMap {
         if !self.modules.contains(group) {
             return plain;
         }
-        // Treating the module path as a file yields the group enclosing it.
-        let around = self.group_hue(group_of(group, &self.roots, &self.modules));
-        let mut hue = plain;
-        let mut salt = 0u32;
-        while hue_dist(hue, around) < MODULE_MIN_HUE_DIST && salt < 16 {
-            salt += 1;
-            hue = hue_from_hash(hash_str(&format!("{group}#{salt}")));
+        // Every group enclosing this module (treating a group path as a file
+        // yields the group around it), so a nested module (a submodule inside a
+        // submodule) also stands apart from the colors further up.
+        // Color roots draw neutral gray, so they don't constrain the hue.
+        let mut around = Vec::new();
+        let mut outer = group_of(group, &self.roots, &self.modules);
+        while !outer.is_empty() {
+            if self.modules.contains(outer) || !self.roots.contains(outer) {
+                around.push(self.group_hue(outer));
+            }
+            outer = group_of(outer, &self.roots, &self.modules);
         }
-        hue
+        let clearance = |h: f32| {
+            around
+                .iter()
+                .map(|&a| hue_dist(h, a))
+                .fold(f32::INFINITY, f32::min)
+        };
+        let (mut best, mut best_clear) = (plain, clearance(plain));
+        let mut salt = 0u32;
+        while best_clear < MODULE_MIN_HUE_DIST && salt < 32 {
+            salt += 1;
+            let hue = hue_from_hash(hash_str(&format!("{group}#{salt}")));
+            let c = clearance(hue);
+            if c > best_clear {
+                (best, best_clear) = (hue, c);
+            }
+        }
+        best
     }
 
     /// Top-level-folder coloring only (tests, and the pre-1.1 behavior).

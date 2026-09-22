@@ -46,9 +46,17 @@ Generate your own with `gitatlas /path/to/repo -o atlas.mp4`.*
   pixel icons** chosen per committer and tinted with their color.
 - **Language split** — the HUD shows the live breakdown of the tree by
   programming language (by lines), with colored swatches.
-- **Submodules** — git submodules are included by default as small tiles that
-  flash when their pointer is bumped; toggle with `--no-submodules` or filter by
-  name with `--include-submodule` / `--exclude-submodule`.
+- **Submodules** — checked-out git submodules are merged in by default: their
+  full history joins the main repo's commits in one timeline (sorted by commit
+  time), and their files are drawn as ordinary folders at the submodule path,
+  with every folder rule (filters, colors, balancing, depth) applying.
+  `--since` / `--max-commits` select from that shared pool. `--submodule-depth N`
+  sets how many levels are included (default 1 = the repo's own submodules,
+  2 = also theirs, 0 = none); filter by name with `--include-submodule` /
+  `--exclude-submodule`. Submodules must be initialized
+  (`git submodule update --init`); gitatlas warns about any that aren't. Each
+  submodule gets a **color of its own** (`--no-submodule-colors` to color it like
+  a plain folder).
 - **Per-module border colors** — every top-level folder gets a stable hue (from a
   hash of its name), shared by its whole subtree, matching the reference atlas
   look. If most of the repo sits under one chain such as `src/app/`, gitatlas
@@ -158,6 +166,7 @@ See [`CLAUDE.md`](CLAUDE.md) for the full architecture.
 ## Commands
 
 ```
+gitatlas                            # no arguments: show the help
 gitatlas [OPTIONS] [REPO]           # render (default); REPO defaults to "."
 gitatlas render [OPTIONS] [REPO]
 gitatlas info [REPO]                # commits, authors, files, date range
@@ -172,7 +181,9 @@ gitatlas help [COMMAND]             # detailed, grouped help
 
 `gitatlas snapshot` renders a single commit's state straight to a **PNG** (no
 ffmpeg, no floating avatars) with that commit's changed files highlighted. Pick
-the commit by revision, index, or date:
+the commit by revision, index, or date. With a revision or date it reads only
+that commit's tree (main repo and submodules), never the history, so it is fast
+even on huge repositories; `--commit N` walks the history to count commits:
 
 ```bash
 gitatlas snapshot /repo -o still.png                 # HEAD
@@ -200,11 +211,11 @@ Run `gitatlas --help` for the complete, grouped list. Highlights:
 
 | Area | Flags |
 |------|-------|
-| Git & input | `--rev`, `--since`, `--until`, `--max-commits`, `--empty-start`, `--full-history`, `--no-submodules`, `--include-submodule NAME`, `--exclude-submodule NAME` |
+| Git & input | `--rev`, `--since`, `--until`, `--max-commits`, `--empty-start`, `--full-history`, `--submodule-depth N`, `--no-submodules`, `--include-submodule NAME`, `--exclude-submodule NAME` |
 | Files & folders | `--include GLOB`, `--exclude GLOB` (repeatable; matched against the repo-relative path, exclude wins) |
 | Output/timing | `-o/--out`, `--codec mp4\|webm`, `--quality draft\|balanced\|high`, `--resolution WxH`, `--fps`, `--seconds`, `--seconds-per-commit`, `--threads` |
 | Layout | `--max-depth`, `--depth-mode omit\|collapse`, `--balance`, `--gamma`, `--size-cap`, `--min-open-px`, `--pad`, `--margin`, `--saturation`, `--background #RRGGBB` |
-| Color groups | `--color-root FOLDER`, `--color-module FOLDER` (both repeatable), `--no-auto-color` |
+| Color groups | `--color-root FOLDER`, `--color-module FOLDER` (both repeatable), `--no-auto-color`, `--no-submodule-colors` |
 | Tiles | `--no-minimap`, `--minimap-line-gap`, `--minimap-max-lines`, `--no-border`, `--border-width` |
 | Labels | `--no-dir-names`, `--dir-name-max-depth`, `--file-names`, `--file-name-min-px`, `--label-size` |
 | Avatars/beams | `--no-avatars`, `--no-avatar-names`, `--avatar-size`, `--avatar-config FILE`, `--avatar-dir DIR`, `--gravatar`, `--no-beams`, `--beam-intensity`, `--beam-seconds` |

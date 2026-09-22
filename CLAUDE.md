@@ -29,8 +29,15 @@ start.
 ingest.rs   git log --raw --numstat (one stream)  → History{paths, authors, commits}
             - line-count deltas (metric for minimap); binary files ('-') dropped
             - --raw gives A/M/D status + file mode; --numstat gives counts+binary
-            - submodules: gitlinks (mode 160000) included by default as nominal
-              tiles (SUBMODULE_NOMINAL lines); IngestOptions has submodules +
+            - submodules: discover() lists the main repo + checked-out
+              submodules (ls-tree gitlinks, pinned sha) down to submodule_depth
+              (default 1) as RepoSpecs; each is walked with the same Parser under
+              its path prefix, the runs are k-way merged by commit time
+              (merge_by_time keeps per-repo order), then --max-commits cuts the
+              pool. Gitlink entries themselves are always skipped. Per-repo
+              baseline = tree at parent of its first kept commit / its last
+              walked commit / rev-list --before=since. IngestOptions has
+              submodule_depth +
               include/exclude filters
 lang.rs     extension -> language id + color (LANGS table); build_path_lang once,
             per-keyframe line totals feed the HUD language split
@@ -71,7 +78,8 @@ groups.rs   ColorMap (built once from the FINAL state): path id -> group hue.
             Group = direct subfolder of the deepest "color root" above a file;
             roots = "" + --color-root (+ancestors) + the auto-detected dominant
             chain (child >= 70% of parent's capped lines); --color-module folders
-            are their own group. Root dirs get NEUTRAL_HUE (gray). Lives in
+            are their own group, and so is every merged submodule (History.submodules,
+            unless submodule_colors = false). Root dirs get NEUTRAL_HUE (gray). Lives in
             RenderCtx.colors; build_tree takes it.
 color.rs    stable hue from folder-name hash → per-root border/fill/minimap colors
 config.rs   resolved Config (all options).
@@ -89,6 +97,10 @@ main.rs     dispatch subcommands; resolve_config() merges --config; setup_render
             builds ctx/params/frame_rect (shared by render + snapshot). snapshot()
             renders one commit's FramePlan (no avatars/beams) to PNG via
             Pixmap::save_png — no ffmpeg; commit picked by --at/--commit/--date.
+            --at/--date use ingest::snapshot_at (target commit + parallel
+            tree dumps: main at target, submodules of --rev as of the target
+            date, NO history walk; pool_position() for "N/M"); --commit N and
+            --empty-start take the walked path.
 fmt.rs      shared number/date helpers (commafy, fmt_compact, fmt_date,
             civil<->days, parse_date_to_epoch) used by HUD + CLI + snapshot.
 geom.rs easing.rs intern.rs   small helpers

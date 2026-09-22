@@ -367,6 +367,7 @@ mod tests {
             authors: vec![],
             commits: vec![],
             baseline: vec![],
+            submodules: vec![],
         }
     }
 
@@ -407,6 +408,7 @@ mod tests {
             authors: vec![],
             commits: vec![],
             baseline: vec![],
+            submodules: vec![],
         };
         let tree = build_tree(
             &files,

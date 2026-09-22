@@ -151,8 +151,8 @@ pub fn generate(d: &Config, history: &History) -> String {
     );
     line(
         &mut s,
-        &format!("submodules = {}", d.submodules),
-        "include git submodules as tiles",
+        &format!("submodule_depth = {}", d.submodule_depth),
+        "submodule levels merged in (0 = none, 1 = direct, 2 = nested ...)",
     );
     line(
         &mut s,
@@ -286,6 +286,11 @@ pub fn generate(d: &Config, history: &History) -> String {
         &mut s,
         "color_roots = []",
         "color by the subfolders of these, e.g. [\"src/app\"]",
+    );
+    line(
+        &mut s,
+        &format!("submodule_colors = {}", d.submodule_colors),
+        "every merged submodule gets its own color",
     );
     line(
         &mut s,

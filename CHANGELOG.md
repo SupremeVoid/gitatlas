@@ -3,6 +3,31 @@
 All notable changes to gitatlas are documented here. This project adheres to
 [Semantic Versioning](https://semver.org/).
 
+## 1.3.0
+
+- **Submodules are merged in, not placeholders.** Each checked-out submodule's
+  full history joins the main repo's commits in one timeline (ordered by commit
+  time, each repo keeping its own order), and its files appear as ordinary
+  folders under the submodule path — every folder rule applies. `--since` and
+  `--max-commits` select from this shared pool; a repo that starts mid-window
+  contributes its state at that point to the starting map. Submodule commits are
+  tagged `[path]` in the HUD subject, and every submodule gets a color of its
+  own (treated as a color module; `--no-submodule-colors` / config
+  `submodule_colors = false` to opt out).
+- `--submodule-depth N` (default 1; config `submodule_depth`) replaces the
+  `submodules` on/off switch: 0 = none, 1 = direct submodules, 2 = also nested
+  ones. `--no-submodules` and the old `submodules = true|false` config key still
+  work. Uninitialized submodules and unfetched pinned commits are reported.
+- The history cache is keyed by every merged repo's commit, so initializing or
+  re-pinning a submodule refreshes it.
+
+- **`snapshot` no longer reads the whole history.** With `--at` (default HEAD)
+  or `--date` it reads just that commit's tree — main repo and submodules, in
+  parallel — so a still of a huge monorepo takes seconds instead of a full
+  `git log` pass. `--commit N` still walks the history (N counts commits).
+- Running `gitatlas` with no arguments prints the help instead of rendering the
+  current directory (`gitatlas .` still does that).
+
 ## 1.2.0
 
 - **Folder balancing (`--balance`, default 0.25).** The split of area among

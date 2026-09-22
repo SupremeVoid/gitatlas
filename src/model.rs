@@ -335,6 +335,7 @@ mod tests {
             }],
             commits: vec![],
             baseline: vec![],
+            submodules: vec![],
         }
     }
     fn commit(changes: Vec<FileDelta>) -> Commit {

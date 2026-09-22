@@ -33,8 +33,9 @@ pub enum DepthModeArg {
 /// filled with "minimap" lines, and committer avatars hover over their changes
 /// with glowing beams. The output is a video encoded with the system ffmpeg.
 ///
-/// With no subcommand, gitatlas renders (so `gitatlas .` just works). Use the
-/// `info` and `languages` subcommands to inspect a repo without rendering.
+/// With no subcommand, gitatlas renders (so `gitatlas .` just works); with no
+/// arguments at all it prints this help. Use the `info` and `languages`
+/// subcommands to inspect a repo without rendering.
 ///
 /// EXAMPLES:
 ///   gitatlas . -o atlas.mp4
@@ -128,7 +129,11 @@ pub struct ScanArgs {
     /// Walk all commits, not just the first-parent mainline.
     #[arg(long)]
     pub full_history: bool,
-    /// Exclude git submodules.
+    /// Levels of git submodules whose history is merged in (0 = none, 1 = direct
+    /// submodules, 2 = also theirs, ...).
+    #[arg(long, value_name = "N", default_value_t = 1)]
+    pub submodule_depth: u32,
+    /// Shorthand for --submodule-depth 0.
     #[arg(long)]
     pub no_submodules: bool,
     /// Only include submodules matching NAME (repeatable).
@@ -150,7 +155,11 @@ impl ScanArgs {
             until: self.until.clone(),
             max_commits: self.max_commits,
             rev: self.rev.clone(),
-            submodules: !self.no_submodules,
+            submodule_depth: if self.no_submodules {
+                0
+            } else {
+                self.submodule_depth
+            },
             submodule_include: self.include_submodule.clone(),
             submodule_exclude: self.exclude_submodule.clone(),
         }
@@ -179,7 +188,17 @@ pub struct RenderArgs {
     /// Walk all commits, not just the first-parent mainline.
     #[arg(long, help_heading = "Git & input")]
     pub full_history: bool,
-    /// Exclude git submodules (included by default as small tiles).
+    /// Levels of git submodules whose full history is merged into the timeline
+    /// and drawn as ordinary folders: 0 = none, 1 = the repo's own submodules,
+    /// 2 = also their submodules, ... Submodules must be checked out.
+    #[arg(
+        long,
+        value_name = "N",
+        default_value_t = 1,
+        help_heading = "Git & input"
+    )]
+    pub submodule_depth: u32,
+    /// Shorthand for --submodule-depth 0.
     #[arg(long, help_heading = "Git & input")]
     pub no_submodules: bool,
     /// Only include submodules matching NAME (repeatable; name, path, or substring).
@@ -312,6 +331,10 @@ pub struct RenderArgs {
     /// the level where the tree splits; always color by top-level folder.
     #[arg(long, help_heading = "Color groups")]
     pub no_auto_color: bool,
+    /// Don't give merged submodules a color of their own; they are colored like
+    /// any other folder instead.
+    #[arg(long, help_heading = "Color groups")]
+    pub no_submodule_colors: bool,
 
     // ---------------- Tiles & minimap ----------------
     /// Hide the minimap lines inside file tiles.
@@ -493,7 +516,11 @@ impl RenderArgs {
             until: self.until,
             max_commits: self.max_commits,
             first_parent: !self.full_history,
-            submodules: !self.no_submodules,
+            submodule_depth: if self.no_submodules {
+                0
+            } else {
+                self.submodule_depth
+            },
             submodule_include: self.include_submodule,
             submodule_exclude: self.exclude_submodule,
             include: self.include,
@@ -526,6 +553,7 @@ impl RenderArgs {
             color_roots: self.color_root,
             color_modules: self.color_module,
             auto_color: !self.no_auto_color,
+            submodule_colors: !self.no_submodule_colors,
 
             show_minimap: !self.no_minimap,
             minimap_line_gap: self.minimap_line_gap,

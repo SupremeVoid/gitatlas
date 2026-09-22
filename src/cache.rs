@@ -8,41 +8,48 @@ use std::process::Command;
 
 use anyhow::Result;
 
-use crate::ingest::{Author, Commit, FileDelta, History, IngestOptions};
+use crate::ingest::{Author, Commit, FileDelta, History, IngestOptions, RepoSpec};
 
-const MAGIC: &[u8; 8] = b"GATLAS\x02\x00";
+const MAGIC: &[u8; 8] = b"GATLAS\x04\x00";
 
 fn cache_path(repo: &Path) -> PathBuf {
     repo.join(".git").join("gitatlas-history.bin")
 }
 
-fn key(repo: &Path, opts: &IngestOptions) -> Option<String> {
-    let out = Command::new("git")
-        .arg("-C")
-        .arg(repo)
-        .args(["rev-parse", &opts.rev])
-        .output()
-        .ok()?;
-    if !out.status.success() {
-        return None;
+/// Every repo of the pool (main + submodules) by resolved sha, plus the ingest
+/// options: a new commit, a newly initialized or re-pinned submodule, or any
+/// option change invalidates the cache.
+fn key(specs: &[RepoSpec], opts: &IngestOptions) -> Option<String> {
+    let mut repos = String::new();
+    for spec in specs {
+        let out = Command::new("git")
+            .arg("-C")
+            .arg(&spec.dir)
+            .args(["rev-parse", &spec.rev])
+            .output()
+            .ok()?;
+        if !out.status.success() {
+            return None;
+        }
+        let sha = String::from_utf8_lossy(&out.stdout).trim().to_string();
+        repos.push_str(&format!("{}={sha};", spec.prefix));
     }
-    let head = String::from_utf8_lossy(&out.stdout).trim().to_string();
     Some(format!(
-        "{head}|fp={}|since={:?}|until={:?}|max={}|rev={}|sub={}|subin={:?}|subex={:?}",
+        "{repos}|fp={}|since={:?}|until={:?}|max={}|rev={}|subdepth={}|subin={:?}|subex={:?}",
         opts.first_parent,
         opts.since,
         opts.until,
         opts.max_commits,
         opts.rev,
-        opts.submodules,
+        opts.submodule_depth,
         opts.submodule_include,
         opts.submodule_exclude
     ))
 }
 
-pub fn load(repo: &Path, opts: &IngestOptions) -> Option<History> {
-    let k = key(repo, opts)?;
-    let path = cache_path(repo);
+pub fn load(specs: &[RepoSpec], opts: &IngestOptions) -> Option<History> {
+    let k = key(specs, opts)?;
+    let path = cache_path(&specs[0].dir);
     let bytes = std::fs::read(path).ok()?;
     let mut r = Reader { b: &bytes, pos: 0 };
     if r.take(8)? != MAGIC {
@@ -102,16 +109,22 @@ pub fn load(repo: &Path, opts: &IngestOptions) -> Option<History> {
     for _ in 0..nb {
         baseline.push((r.u32()?, r.u32()?));
     }
+    let ns = r.u32()? as usize;
+    let mut submodules = Vec::with_capacity(ns);
+    for _ in 0..ns {
+        submodules.push(r.string()?);
+    }
     Some(History {
         paths,
         authors,
         commits,
         baseline,
+        submodules,
     })
 }
 
-pub fn save(repo: &Path, opts: &IngestOptions, history: &History) -> Result<()> {
-    let k = match key(repo, opts) {
+pub fn save(specs: &[RepoSpec], opts: &IngestOptions, history: &History) -> Result<()> {
+    let k = match key(specs, opts) {
         Some(k) => k,
         None => return Ok(()),
     };
@@ -152,8 +165,12 @@ pub fn save(repo: &Path, opts: &IngestOptions, history: &History) -> Result<()> 
         w.u32(path);
         w.u32(lines);
     }
+    w.u32(history.submodules.len() as u32);
+    for sm in &history.submodules {
+        w.string(sm);
+    }
     // Write atomically-ish: temp then rename.
-    let path = cache_path(repo);
+    let path = cache_path(&specs[0].dir);
     if let Some(parent) = path.parent()
         && !parent.exists()
     {

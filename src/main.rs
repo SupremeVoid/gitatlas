@@ -31,7 +31,7 @@ mod model;
 mod render;
 
 use anyhow::Result;
-use clap::Parser;
+use clap::{CommandFactory, Parser};
 use globset::{Glob, GlobSet, GlobSetBuilder};
 use std::collections::{BTreeSet, HashMap};
 use std::path::PathBuf;
@@ -55,6 +55,12 @@ fn main() {
 }
 
 fn real_main() -> Result<()> {
+    // Bare `gitatlas` shows the help instead of rendering the current directory
+    // (`gitatlas .` does that).
+    if std::env::args_os().len() <= 1 {
+        Cli::command().print_long_help()?;
+        return Ok(());
+    }
     let cli = Cli::parse();
     match cli.command {
         None => render(cli.render),
@@ -69,7 +75,8 @@ fn real_main() -> Result<()> {
 /// Load history, using the on-disk cache when enabled.
 fn load_history(repo: &std::path::Path, opts: &IngestOptions, use_cache: bool) -> Result<History> {
     let t0 = Instant::now();
-    if use_cache && let Some(h) = cache::load(repo, opts) {
+    let specs = ingest::discover(repo, opts, false)?;
+    if use_cache && let Some(h) = cache::load(&specs, opts) {
         eprintln!(
             "• loaded cached history ({} commits, {:.2}s)",
             h.commits.len(),
@@ -78,7 +85,7 @@ fn load_history(repo: &std::path::Path, opts: &IngestOptions, use_cache: bool) -
         return Ok(h);
     }
     eprintln!("• reading git history from {} ...", repo.display());
-    let h = ingest::ingest(repo, opts)?;
+    let h = ingest::ingest(&specs, opts)?;
     if h.commits.is_empty() {
         anyhow::bail!("no commits found for the selected range");
     }
@@ -89,7 +96,7 @@ fn load_history(repo: &std::path::Path, opts: &IngestOptions, use_cache: bool) -
         h.authors.len(),
         t0.elapsed().as_secs_f64()
     );
-    if use_cache && let Err(e) = cache::save(repo, opts, &h) {
+    if use_cache && let Err(e) = cache::save(&specs, opts, &h) {
         eprintln!("  (cache write skipped: {e})");
     }
     Ok(h)
@@ -329,20 +336,45 @@ fn snapshot(args: cli::SnapshotArgs) -> Result<()> {
     }
 
     let opts = cfg.ingest_options();
-    let mut history = load_history(&cfg.repo, &opts, cfg.cache)?;
-    if !cfg.baseline {
-        history.baseline.clear();
-    }
+    // A revision or date needs only the repository's state at that commit, not
+    // its history: read the tree directly (fast on huge repos). `--commit N`
+    // counts through the walked history, and `--empty-start` makes the state
+    // depend on the window, so those still walk it.
+    let fast = commit.is_none() && cfg.baseline;
+    let (mut history, idx, pos, n) = if fast {
+        let sha = snapshot_target(&cfg, &at, date.as_deref())?;
+        let t0 = Instant::now();
+        eprintln!(
+            "• reading the repository at {} (no history walk) ...",
+            &sha[..sha.len().min(9)]
+        );
+        let h = ingest::snapshot_at(&cfg.repo, &opts, &sha)?;
+        eprintln!(
+            "  {} files  ({:.1}s)",
+            commafy(h.baseline.len() as u64),
+            t0.elapsed().as_secs_f64()
+        );
+        let (pos, n) = ingest::pool_position(&cfg.repo, &opts, &sha, h.commits[0].time);
+        (h, 0, pos, n)
+    } else {
+        let mut h = load_history(&cfg.repo, &opts, cfg.cache)?;
+        if !cfg.baseline {
+            h.baseline.clear();
+        }
+        let idx = resolve_commit_index(&cfg.repo, &h, &at, commit, date.as_deref())?;
+        let n = h.commits.len();
+        (h, idx, idx, n)
+    };
     filter_history(&mut history, &cfg.include, &cfg.exclude)?;
-    let n = history.commits.len();
-
-    let idx = resolve_commit_index(&cfg.repo, &history, &at, commit, date.as_deref())?;
     let target = &history.commits[idx];
 
-    // Build the state up to and including the target commit.
+    // Build the state at the target commit (the fast path's baseline already
+    // is that state; the walked path replays up to and including it).
     let mut state = model::WorldState::new(&history);
-    for c in &history.commits[..=idx] {
-        state.apply(c);
+    if !fast {
+        for c in &history.commits[..=idx] {
+            state.apply(c);
+        }
     }
     let snap = state.snapshot();
     let size_cap = cfg
@@ -408,12 +440,12 @@ fn snapshot(args: cli::SnapshotArgs) -> Result<()> {
         author,
         subject: target.subject.clone(),
         commit_hash: target.hash.chars().take(9).collect(),
-        commit_idx: idx,
+        commit_idx: pos,
         total_commits: n,
         files: snap.files_count,
         lines: snap.lines,
         progress: if n > 1 {
-            idx as f32 / (n - 1) as f32
+            pos as f32 / (n - 1) as f32
         } else {
             0.0
         },
@@ -447,7 +479,7 @@ fn snapshot(args: cli::SnapshotArgs) -> Result<()> {
     eprintln!(
         "✓ wrote {}  (commit {}/{}, {}, {})",
         out.display(),
-        idx + 1,
+        pos + 1,
         n,
         fmt_date(target.time),
         &target.hash[..target.hash.len().min(9)]
@@ -456,6 +488,29 @@ fn snapshot(args: cli::SnapshotArgs) -> Result<()> {
 }
 
 /// Resolve which commit (index into `history.commits`) to snapshot.
+/// Commit sha a fast snapshot renders: `--date` = the last commit on/before
+/// that day on `--rev`, otherwise the `--at` revision.
+fn snapshot_target(cfg: &Config, at: &str, date: Option<&str>) -> Result<String> {
+    if let Some(d) = date {
+        parse_date_to_epoch(d)?; // same validation / error as the walked path
+        let before = format!("--before={d} 23:59:59");
+        let mut a = vec!["rev-list", "-1"];
+        if cfg.first_parent {
+            a.push("--first-parent");
+        }
+        a.push(&before);
+        a.push(&cfg.rev);
+        return git_output(&cfg.repo, &a)
+            .filter(|s| !s.is_empty())
+            .ok_or_else(|| anyhow::anyhow!("no commit on or before {d}"));
+    }
+    git_output(
+        &cfg.repo,
+        &["rev-parse", "--verify", &format!("{at}^{{commit}}")],
+    )
+    .ok_or_else(|| anyhow::anyhow!("could not resolve revision '{at}'"))
+}
+
 fn resolve_commit_index(
     repo: &std::path::Path,
     history: &History,
@@ -700,12 +755,16 @@ fn build_colors(
     final_state: &model::WorldState,
     size_cap: f32,
 ) -> groups::ColorMap {
+    let mut modules = cfg.color_modules.clone();
+    if cfg.submodule_colors {
+        modules.extend(history.submodules.iter().cloned());
+    }
     let colors = groups::ColorMap::build(
         &history.paths,
         &final_state.snapshot().files,
         size_cap,
         &cfg.color_roots,
-        &cfg.color_modules,
+        &modules,
         cfg.auto_color,
     );
     if !colors.auto_root.is_empty() {
