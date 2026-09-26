@@ -291,6 +291,16 @@ pub struct RenderArgs {
     /// up a speck (0.25: a folder 100x its neighbour gets ~32x the area).
     #[arg(long, default_value_t = 0.25, help_heading = "Layout")]
     pub balance: f32,
+    /// Adjust --balance for folders matching GLOB by DELTA (repeatable; last
+    /// match wins). Higher pulls the folder toward a typical sibling's size (a
+    /// giant shrinks, a speck grows), lower toward its true proportion.
+    /// E.g. "src/docs=+0.4", "vendor/**=-0.25". Effective range -1..1.
+    #[arg(
+        long = "balance-rule",
+        value_name = "GLOB=DELTA",
+        help_heading = "Layout"
+    )]
+    pub balance_rule: Vec<String>,
     /// Fixed area-metric cap in lines (default: auto = 95th percentile).
     #[arg(long, help_heading = "Layout")]
     pub size_cap: Option<f32>,
@@ -544,6 +554,11 @@ impl RenderArgs {
             },
             gamma: self.gamma,
             balance: self.balance,
+            balance_rules: self
+                .balance_rule
+                .iter()
+                .map(|r| parse_balance_rule(r))
+                .collect::<Result<_>>()?,
             size_cap: self.size_cap,
             min_open_px: self.min_open_px,
             pad: self.pad,
@@ -595,8 +610,36 @@ impl RenderArgs {
     }
 }
 
+/// "GLOB=DELTA" (DELTA may carry a sign, e.g. "src/docs=+0.4").
+fn parse_balance_rule(s: &str) -> Result<crate::config::BalanceRule> {
+    let (glob, delta) = s
+        .rsplit_once('=')
+        .ok_or_else(|| anyhow::anyhow!("--balance-rule '{s}': expected GLOB=DELTA"))?;
+    let balance: f32 = delta
+        .trim()
+        .parse()
+        .map_err(|_| anyhow::anyhow!("--balance-rule '{s}': '{delta}' is not a number"))?;
+    if glob.trim().is_empty() || !balance.is_finite() {
+        bail!("--balance-rule '{s}': expected GLOB=DELTA");
+    }
+    Ok(crate::config::BalanceRule {
+        folder: glob.trim().to_string(),
+        balance,
+    })
+}
+
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn balance_rule_parses() {
+        let r = super::parse_balance_rule("src/docs=+0.4").unwrap();
+        assert_eq!((r.folder.as_str(), r.balance), ("src/docs", 0.4));
+        let r = super::parse_balance_rule("a=b/**=-0.25").unwrap();
+        assert_eq!((r.folder.as_str(), r.balance), ("a=b/**", -0.25));
+        assert!(super::parse_balance_rule("src/docs").is_err());
+        assert!(super::parse_balance_rule("src/docs=big").is_err());
+    }
+
     use super::*;
 
     #[test]

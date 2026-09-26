@@ -238,6 +238,11 @@ pub fn generate(d: &Config, history: &History) -> String {
         &format!("balance = {:?}", d.balance),
         "sibling-folder balancing 0..0.9 (0 = proportional; higher evens out big vs small)",
     );
+    line(
+        &mut s,
+        "balance_rules = []",
+        "per-folder offsets, e.g. [{ folder = \"src/docs\", balance = 0.4 }]",
+    );
     comment(
         &mut s,
         "size_cap = 4000.0",

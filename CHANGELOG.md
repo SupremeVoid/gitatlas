@@ -3,6 +3,20 @@
 All notable changes to gitatlas are documented here. This project adheres to
 [Semantic Versioning](https://semver.org/).
 
+## 1.4.0
+
+- **Balance rules.** `--balance-rule GLOB=DELTA` (repeatable; config
+  `balance_rules = [{ folder = "…", balance = … }]`) gives matching folders
+  their own balance, `--balance + DELTA` (-1..1, last match wins). Balancing is
+  now expressed as a pull toward the *typical* sibling (geometric mean of the
+  sibling sizes): a higher value pulls a folder closer to it (a giant shrinks, a
+  speck grows; 1 = exactly typical), a lower one keeps it nearer its true
+  proportion. Without rules the layout is identical to before.
+- **Folder globs.** `--include` / `--exclude` (and balance rules) accept a plain
+  folder — `src/docs/assets`, `src/docs/assets/` or `src/docs/assets/**` all
+  select everything in it, also inside submodules. Previously only the `/**`
+  form matched.
+
 ## 1.3.0
 
 - **Submodules are merged in, not placeholders.** Each checked-out submodule's

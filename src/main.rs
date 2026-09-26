@@ -131,6 +131,7 @@ fn setup_render(
     images_extra: &HashMap<String, PathBuf>,
     size_cap: f32,
     colors: groups::ColorMap,
+    dir_balance: rustc_hash::FxHashMap<u64, f32>,
 ) -> (RenderCtx, LayoutParams, Rect) {
     // Merge avatar image sources: config-file committer images, then --avatar-config.
     let mut images = images_extra.clone();
@@ -204,6 +205,7 @@ fn setup_render(
     let params = LayoutParams {
         gamma: cfg.gamma,
         balance: cfg.balance,
+        dir_balance: std::sync::Arc::new(dir_balance),
         min_weight: 1.0,
         size_cap,
         min_open_px: cfg.min_open_px,
@@ -284,8 +286,15 @@ fn render(args: cli::RenderArgs) -> Result<()> {
     let colors = build_colors(&cfg, &history, &final_state, size_cap);
 
     eprintln!("• building {} avatars ...", history.authors.len());
-    let (ctx, params, frame_rect) =
-        setup_render(&cfg, &history, &cfg_labels, &cfg_images, size_cap, colors);
+    let (ctx, params, frame_rect) = setup_render(
+        &cfg,
+        &history,
+        &cfg_labels,
+        &cfg_images,
+        size_cap,
+        colors,
+        dir_balance_map(&cfg, &history)?,
+    );
 
     eprintln!("• rendering → {} ...", cfg.out.display());
     let t1 = Instant::now();
@@ -399,8 +408,15 @@ fn snapshot(args: cli::SnapshotArgs) -> Result<()> {
     let colors = build_colors(&cfg, &history, &state, size_cap);
 
     eprintln!("• building context ...");
-    let (ctx, params, frame_rect) =
-        setup_render(&cfg, &history, &cfg_labels, &cfg_images, size_cap, colors);
+    let (ctx, params, frame_rect) = setup_render(
+        &cfg,
+        &history,
+        &cfg_labels,
+        &cfg_images,
+        size_cap,
+        colors,
+        dir_balance_map(&cfg, &history)?,
+    );
 
     // Tree + layout at the target state.
     let collapse = cfg.depth_mode == crate::config::DepthMode::Collapse;
@@ -686,10 +702,80 @@ fn build_glob(p: &str) -> Result<Glob> {
         .and_then(|s| s.strip_suffix('\''))
         .or_else(|| t.strip_prefix('"').and_then(|s| s.strip_suffix('"')))
         .unwrap_or(t);
+    // "src/docs/" means the folder, same as "src/docs" (see `glob_hits`).
+    let t = if t.len() > 1 {
+        t.trim_end_matches('/')
+    } else {
+        t
+    };
     globset::GlobBuilder::new(t)
         .case_insensitive(true)
         .build()
         .map_err(|e| anyhow::anyhow!("bad glob '{p}': {e}"))
+}
+
+/// A path glob selects a file when it matches the file's path or any folder
+/// above it, so `src/docs`, `src/docs/` and `src/docs/**` all select everything
+/// in that folder — including folders that come from a submodule.
+fn glob_hits(is_match: impl Fn(&str) -> bool, path: &str) -> bool {
+    if is_match(path) {
+        return true;
+    }
+    let mut dir = path;
+    while let Some(i) = dir.rfind('/') {
+        dir = &dir[..i];
+        if is_match(dir) {
+            return true;
+        }
+    }
+    false
+}
+
+/// Effective balance of every folder matched by a balance rule (keyed like tree
+/// nodes); unmatched folders keep the global balance. Last matching rule wins.
+fn dir_balance_map(cfg: &Config, history: &History) -> Result<rustc_hash::FxHashMap<u64, f32>> {
+    let mut map = rustc_hash::FxHashMap::default();
+    let rules = &cfg.balance_rules;
+    if rules.is_empty() {
+        return Ok(map);
+    }
+    let globs: Vec<globset::GlobMatcher> = rules
+        .iter()
+        .map(|r| build_glob(&r.folder).map(|g| g.compile_matcher()))
+        .collect::<Result<_>>()?;
+    let base = cfg.balance.clamp(0.0, 0.9);
+    let mut seen: rustc_hash::FxHashSet<&str> = Default::default();
+    let mut hits = vec![0usize; rules.len()];
+    for path in &history.paths {
+        let mut dir = path.as_str();
+        while let Some(i) = dir.rfind('/') {
+            dir = &dir[..i];
+            if !seen.insert(dir) {
+                break; // this folder and everything above it are done
+            }
+            if let Some(r) = (0..rules.len()).rev().find(|&r| globs[r].is_match(dir)) {
+                hits[r] += 1;
+                map.insert(
+                    crate::color::hash_str(dir),
+                    (base + rules[r].balance).clamp(-1.0, 1.0),
+                );
+            }
+        }
+    }
+    eprintln!(
+        "• balance rules: {} rule(s), {} folder(s) adjusted",
+        rules.len(),
+        commafy(map.len() as u64)
+    );
+    for (r, n) in rules.iter().zip(hits) {
+        if n == 0 {
+            eprintln!(
+                "  ! warning: balance rule \"{}\" matches no folder in this repository",
+                r.folder
+            );
+        }
+    }
+    Ok(map)
 }
 
 /// Apply file/folder include/exclude globs, dropping changes for paths that don't
@@ -705,12 +791,12 @@ fn filter_history(history: &mut History, include: &[String], exclude: &[String])
         .iter()
         .map(|p| {
             if let Some(e) = &exc
-                && e.is_match(p.as_str())
+                && glob_hits(|s| e.is_match(s), p)
             {
                 return false;
             }
             if let Some(i) = &inc
-                && !i.is_match(p.as_str())
+                && !glob_hits(|s| i.is_match(s), p)
             {
                 return false;
             }
@@ -739,7 +825,11 @@ fn filter_history(history: &mut History, include: &[String], exclude: &[String])
     for (kind, pats) in [("include", include), ("exclude", exclude)] {
         for p in pats {
             let m = build_glob(p)?.compile_matcher();
-            if !history.paths.iter().any(|path| m.is_match(path.as_str())) {
+            if !history
+                .paths
+                .iter()
+                .any(|path| glob_hits(|s| m.is_match(s), path))
+            {
                 eprintln!("  ! warning: --{kind} \"{p}\" matches no file in this repository");
             }
         }

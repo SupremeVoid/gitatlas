@@ -73,6 +73,9 @@ pub struct Config {
     /// Folder balancing 0..0.9: compresses how area is split among sibling
     /// folders so small modules stay visible (0 = strictly proportional).
     pub balance: f32,
+    /// Per-folder balance offsets: folders matching `folder` (a glob) use
+    /// `balance + rule.balance` (-1..1). Last matching rule wins.
+    pub balance_rules: Vec<BalanceRule>,
     pub size_cap: Option<f32>, // None => auto from final state percentile
     pub min_open_px: f32,
     pub pad: f32,
@@ -171,6 +174,7 @@ impl Default for Config {
             depth_mode: DepthMode::Omit,
             gamma: 0.5,
             balance: 0.25,
+            balance_rules: Vec::new(),
             size_cap: None,
             min_open_px: 34.0,
             pad: 3.0,
@@ -296,4 +300,14 @@ mod tests {
         assert_eq!(depth("submodules = false"), 0);
         assert_eq!(depth(""), 1);
     }
+}
+
+/// A per-folder balance adjustment (see `Config::balance_rules`).
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct BalanceRule {
+    /// Glob matched against folder paths, e.g. "src/docs" or "vendor/**".
+    pub folder: String,
+    /// Offset added to the global balance for matching folders.
+    pub balance: f32,
 }

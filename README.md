@@ -73,7 +73,9 @@ Generate your own with `gitatlas /path/to/repo -o atlas.mp4`.*
   appear; only tracked, non-binary files are drawn.
 - **Path filters** — `--include GLOB` / `--exclude GLOB` (repeatable) restrict the
   visualization to matching files/folders, e.g. `--include "src/**"` or
-  `--exclude "vendor/**"` to drop vendored dependencies.
+  `--exclude "vendor/**"` to drop vendored dependencies. A glob naming a folder
+  (`vendor`, `vendor/`, `vendor/**`) selects everything in it, including folders
+  that come from a submodule (`src/docs/assets` inside submodule `src/docs`).
 - **Depth control** — `--max-depth N` caps folder nesting; `--depth-mode` chooses
   what happens to deeper items: `omit` (default) drops them for a clean shallow
   map, or `collapse` merges each too-deep subfolder into a single aggregate tile.
@@ -81,6 +83,10 @@ Generate your own with `gitatlas /path/to/repo -o atlas.mp4`.*
   of the map. `--balance` (default 0.25) compresses how area is split among
   sibling folders, so big modules stay biggest but small ones remain readable —
   no need to exclude anything. `--balance 0` is strictly proportional.
+  **Balance rules** tune single folders on top of that: `--balance-rule
+  "src/docs=+0.4"` pulls `src/docs` toward a typical sibling's size (a giant
+  shrinks, a speck grows), `--balance-rule "vendor/**=-0.25"` keeps vendor's
+  subfolders closer to true proportions. Works for folders inside submodules too.
 - **Time windows start from the real repo** — with `--since` / `--max-commits`
   the video opens on the repository as it already was before the first commit
   in the window, then animates only what changes (`--empty-start` to grow it
@@ -214,7 +220,7 @@ Run `gitatlas --help` for the complete, grouped list. Highlights:
 | Git & input | `--rev`, `--since`, `--until`, `--max-commits`, `--empty-start`, `--full-history`, `--submodule-depth N`, `--no-submodules`, `--include-submodule NAME`, `--exclude-submodule NAME` |
 | Files & folders | `--include GLOB`, `--exclude GLOB` (repeatable; matched against the repo-relative path, exclude wins) |
 | Output/timing | `-o/--out`, `--codec mp4\|webm`, `--quality draft\|balanced\|high`, `--resolution WxH`, `--fps`, `--seconds`, `--seconds-per-commit`, `--threads` |
-| Layout | `--max-depth`, `--depth-mode omit\|collapse`, `--balance`, `--gamma`, `--size-cap`, `--min-open-px`, `--pad`, `--margin`, `--saturation`, `--background #RRGGBB` |
+| Layout | `--max-depth`, `--depth-mode omit\|collapse`, `--balance`, `--balance-rule GLOB=DELTA`, `--gamma`, `--size-cap`, `--min-open-px`, `--pad`, `--margin`, `--saturation`, `--background #RRGGBB` |
 | Color groups | `--color-root FOLDER`, `--color-module FOLDER` (both repeatable), `--no-auto-color`, `--no-submodule-colors` |
 | Tiles | `--no-minimap`, `--minimap-line-gap`, `--minimap-max-lines`, `--no-border`, `--border-width` |
 | Labels | `--no-dir-names`, `--dir-name-max-depth`, `--file-names`, `--file-name-min-px`, `--label-size` |

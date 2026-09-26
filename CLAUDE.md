@@ -54,8 +54,9 @@ model.rs    WorldState: path_id -> line count, advanced per commit (apply())
             childless dir as a collapsed tile).
 layout.rs   ordered "squarified strip" treemap (STABLE: name-sorted siblings,
             recursive containment, LOD folder collapse). balanced_shares():
-            sibling dirs split area by sum^(1-balance) on TRUE sums (no depth
-            compounding; loose files = one bucket). layout(tree,rect,params)→Layout
+            share = G*(w/G)^(1-b), G = geometric mean of siblings (loose files
+            = one bucket), on TRUE sums (no depth compounding); per-folder b
+            from LayoutParams.dir_balance (balance rules, main::dir_balance_map). layout(tree,rect,params)→Layout
 driver.rs   the orchestrator. Chunked pipeline:
               1. sequentially advance state + snapshot the states a chunk needs
               2. PARALLEL build keyframes (tree+layout) from snapshots
@@ -91,7 +92,8 @@ configfile.rs  gen-config writes a fully-commented TOML (all options at default 
 cli.rs      clap: `render` (default) + `info` + `languages` + `gen-config` +
             `snapshot` subcommands; grouped help via per-arg help_heading; --config.
             Path filters: filter_history() (globset) drops changes for paths not
-            matching --include / --exclude (exclude wins), applied post-cache in
+            matching --include / --exclude (exclude wins; glob_hits() also tests
+            every ancestor folder, so a bare folder glob selects its contents), applied post-cache in
             render()/snapshot() so changing filters needs no re-ingest.
 main.rs     dispatch subcommands; resolve_config() merges --config; setup_render()
             builds ctx/params/frame_rect (shared by render + snapshot). snapshot()

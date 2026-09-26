@@ -12,12 +12,15 @@ use rustc_hash::FxHashMap;
 use crate::geom::Rect;
 use crate::model::Tree;
 
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 pub struct LayoutParams {
     /// Gamma compression exponent for the area metric (0.5 ≈ sqrt).
     pub gamma: f32,
     /// Folder balancing 0..0.9 (see `balanced_shares`); 0 disables it.
     pub balance: f32,
+    /// Per-folder balance (-1..1) for folders matched by a balance rule, keyed
+    /// like tree nodes (`hash_str(full path)`); other folders use `balance`.
+    pub dir_balance: std::sync::Arc<FxHashMap<u64, f32>>,
     /// Minimum weight floor (in "lines") so tiny files stay visible.
     pub min_weight: f32,
     /// Cap on the area metric (stable, computed once globally) so one huge file
@@ -41,6 +44,7 @@ impl Default for LayoutParams {
         LayoutParams {
             gamma: 0.5,
             balance: 0.0,
+            dir_balance: Default::default(),
             min_weight: 1.0,
             size_cap: 4000.0,
             min_open_px: 34.0,
@@ -127,27 +131,67 @@ pub fn layout(tree: &Tree, frame: Rect, p: &LayoutParams) -> Layout {
 
 /// Sibling weights with folder balancing applied.
 ///
-/// `weights` holds true (proportional) subtree sums. With `balance` b > 0 each
-/// sibling folder's share becomes `sum^(1-b)`: a module 100x the size of its
-/// neighbour gets ~32x the area at b = 0.25 instead of 100x, so big modules stop
-/// crowding out small ones. Only the split among siblings is compressed — a
-/// parent still uses its true sum one level up, so the effect does not compound
-/// with depth. A folder's loose files count as ONE sibling (their combined sum,
-/// split proportionally), otherwise hundreds of small files would each be
-/// boosted and swamp the folders. Pure function of the tree, so still stable.
-fn balanced_shares(tree: &Tree, children: &[u32], weights: &[f32], balance: f32) -> Vec<f32> {
-    let b = balance.clamp(0.0, 0.9);
-    if b <= 0.0 {
+/// `weights` holds true (proportional) subtree sums. Each sibling is pulled
+/// toward the *typical* sibling size G (the geometric mean of the siblings):
+///
+///   share = G · (w / G)^(1 - b)
+///
+/// With one balance b for all siblings this is just `w^(1-b)` up to a common
+/// factor: a module 100x its neighbour gets ~32x the area at b = 0.25 instead of
+/// 100x. A balance rule gives one folder its own b (global + delta): higher
+/// pulls it further toward G (a giant shrinks, a speck grows; b = 1 is exactly
+/// G), lower keeps it closer to its true proportion (b < 0 exaggerates).
+///
+/// Only the split among siblings is compressed — a parent still uses its true
+/// sum one level up, so the effect does not compound with depth. A folder's
+/// loose files count as ONE sibling (their combined sum, split proportionally),
+/// otherwise hundreds of small files would each be boosted and swamp the
+/// folders. Pure function of the tree, so still stable.
+fn balanced_shares(tree: &Tree, children: &[u32], weights: &[f32], p: &LayoutParams) -> Vec<f32> {
+    let b = p.balance.clamp(0.0, 0.9);
+    let rules = !p.dir_balance.is_empty();
+    if b <= 0.0 && !rules {
         return children.iter().map(|&c| weights[c as usize]).collect();
     }
-    let e = 1.0 - b;
+    let is_dir = |c: u32| tree.nodes[c as usize].is_dir;
     let files_sum: f32 = children
         .iter()
-        .filter(|&&c| !tree.nodes[c as usize].is_dir)
+        .filter(|&&c| !is_dir(c))
         .map(|&c| weights[c as usize])
         .sum();
+
+    // Everything is scaled by 1/G^b (common to all siblings, so the layout is
+    // unchanged): a plain sibling is then exactly `w^(1-b)` — the same f32 math
+    // as without rules — and only a ruled folder needs G, the typical sibling
+    // size: G^b * (w/G)^(1-r) / G^b = exp((1-r)·ln w + (r-b)·ln G).
+    let plain = |w: f32| w.powf(1.0 - b);
     let file_scale = if files_sum > 0.0 {
-        files_sum.powf(e) / files_sum
+        plain(files_sum) / files_sum
+    } else {
+        0.0
+    };
+    let rule_of = |c: u32| -> Option<f32> {
+        if rules && is_dir(c) {
+            p.dir_balance.get(&tree.nodes[c as usize].key).copied()
+        } else {
+            None
+        }
+    };
+    let ln_g = if children.iter().any(|&c| rule_of(c).is_some()) {
+        // Geometric mean of the siblings: the folders plus the file bucket.
+        let (mut ln_sum, mut k) = (0.0f64, 0u32);
+        for &c in children {
+            let w = weights[c as usize];
+            if is_dir(c) && w > 0.0 {
+                ln_sum += (w as f64).ln();
+                k += 1;
+            }
+        }
+        if files_sum > 0.0 {
+            ln_sum += (files_sum as f64).ln();
+            k += 1;
+        }
+        if k > 0 { ln_sum / k as f64 } else { 0.0 }
     } else {
         0.0
     };
@@ -155,10 +199,13 @@ fn balanced_shares(tree: &Tree, children: &[u32], weights: &[f32], balance: f32)
         .iter()
         .map(|&c| {
             let w = weights[c as usize];
-            if tree.nodes[c as usize].is_dir {
-                w.powf(e)
-            } else {
-                w * file_scale
+            match rule_of(c) {
+                Some(_) if w <= 0.0 => 0.0,
+                Some(r) => {
+                    ((1.0 - r as f64) * (w as f64).ln() + (r - b) as f64 * ln_g).exp() as f32
+                }
+                None if is_dir(c) => plain(w),
+                None => w * file_scale,
             }
         })
         .collect()
@@ -176,7 +223,7 @@ fn lay_children(
     if children.is_empty() || rect.w <= 0.5 || rect.h <= 0.5 {
         return;
     }
-    let child_weights = balanced_shares(tree, children, weights, p.balance);
+    let child_weights = balanced_shares(tree, children, weights, p);
     let rects = squarified_ordered(rect, &child_weights);
 
     for (&cidx, crect) in children.iter().zip(rects.iter()) {
@@ -437,5 +484,53 @@ mod tests {
         // Loose files act as one sibling: 50 tiny files must not swamp `small`.
         let loose: f32 = (0..50).map(|i| area(0.5, &format!("f{i}.txt"))).sum();
         assert!(loose < small1);
+    }
+
+    #[test]
+    fn balance_rule_pulls_one_folder_toward_typical_size() {
+        // Three sibling folders: one huge, two small.
+        let h = History {
+            paths: vec!["big/a.rs".into(), "s1/b.rs".into(), "s2/c.rs".into()],
+            authors: vec![],
+            commits: vec![],
+            baseline: vec![],
+            submodules: vec![],
+        };
+        let files = [(0u32, 100_000u32), (1, 100), (2, 100)];
+        let tree = build_tree(
+            &files,
+            &h,
+            &crate::groups::ColorMap::top_level(&h.paths),
+            0,
+            false,
+        );
+        let frame = Rect::new(0.0, 0.0, 1000.0, 1000.0);
+        let key = |n: &str| crate::color::hash_str(n);
+        let area = |rules: &[(&str, f32)], name: &str| {
+            let p = LayoutParams {
+                balance: 0.25,
+                size_cap: 1e9,
+                gamma: 1.0,
+                dir_balance: std::sync::Arc::new(rules.iter().map(|&(n, b)| (key(n), b)).collect()),
+                ..LayoutParams::default()
+            };
+            let l = layout(&tree, frame, &p);
+            let t = l.get(key(name)).expect("tile");
+            t.rect.w * t.rect.h
+        };
+        // No rules: identical to plain balancing.
+        let (big, s1) = (area(&[], "big"), area(&[], "s1"));
+        // Pulling `big` harder toward typical shrinks it; `s1` gains.
+        assert!(area(&[("big", 0.75)], "big") < big);
+        assert!(area(&[("big", 0.75)], "s1") > s1);
+        // Pulling a small folder toward typical grows it.
+        assert!(area(&[("s1", 0.75)], "s1") > s1);
+        // Balance 1 = exactly the typical (geometric-mean) sibling size: the
+        // ~178x lead of `big` over `s1` at plain 0.25 drops to single digits.
+        let ratio = |rules: &[(&str, f32)]| area(rules, "big") / area(rules, "s1");
+        assert!(ratio(&[]) > 100.0);
+        assert!(ratio(&[("big", 1.0)]) < 10.0);
+        // Balance 0 for `big` = its true proportion: bigger than balanced.
+        assert!(area(&[("big", 0.0)], "big") > big);
     }
 }
