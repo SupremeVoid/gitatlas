@@ -54,9 +54,15 @@ model.rs    WorldState: path_id -> line count, advanced per commit (apply())
             childless dir as a collapsed tile).
 layout.rs   ordered "squarified strip" treemap (STABLE: name-sorted siblings,
             recursive containment, LOD folder collapse). balanced_shares():
-            share = G*(w/G)^(1-b), G = geometric mean of siblings (loose files
-            = one bucket), on TRUE sums (no depth compounding); per-folder b
-            from LayoutParams.dir_balance (balance rules, main::dir_balance_map). layout(tree,rect,params)→Layout
+            sibling dirs split area by sum^(1-balance) on TRUE sums (no depth
+            compounding; loose files = one bucket). Balance rules: rule_areas()
+            takes each node's page fraction under the global balance, multiplies
+            ruled folders by 1+delta (LayoutParams.dir_scale from
+            main::dir_scale_map). Target share = base*mult; outermost enlarged
+            folders over max_share together get their growth scaled by one
+            common factor; a fixed-point iteration on effective multipliers
+            (bottom-up sums, parents grow) hits the targets; lay_children
+            then uses those areas. layout(tree,rect,params)→Layout
 driver.rs   the orchestrator. Chunked pipeline:
               1. sequentially advance state + snapshot the states a chunk needs
               2. PARALLEL build keyframes (tree+layout) from snapshots

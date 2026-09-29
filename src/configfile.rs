@@ -241,7 +241,12 @@ pub fn generate(d: &Config, history: &History) -> String {
     line(
         &mut s,
         "balance_rules = []",
-        "per-folder offsets, e.g. [{ folder = \"src/docs\", balance = 0.4 }]",
+        "per-folder resize, e.g. [{ folder = \"src/docs\", balance = 1.0 }] (+1 = 2x area)",
+    );
+    line(
+        &mut s,
+        &format!("balance_max_share = {:?}", d.balance_max_share),
+        "cap for a folder a rule enlarges (share of the atlas)",
     );
     comment(
         &mut s,

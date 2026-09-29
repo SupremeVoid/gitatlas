@@ -83,10 +83,13 @@ Generate your own with `gitatlas /path/to/repo -o atlas.mp4`.*
   of the map. `--balance` (default 0.25) compresses how area is split among
   sibling folders, so big modules stay biggest but small ones remain readable —
   no need to exclude anything. `--balance 0` is strictly proportional.
-  **Balance rules** tune single folders on top of that: `--balance-rule
-  "src/docs=+0.4"` pulls `src/docs` toward a typical sibling's size (a giant
-  shrinks, a speck grows), `--balance-rule "vendor/**=-0.25"` keeps vendor's
-  subfolders closer to true proportions. Works for folders inside submodules too.
+  **Balance rules** resize single folders relative to that balanced size:
+  `--balance-rule "src/docs=+1"` doubles the area of `src/docs` on the page,
+  `"vendor/**=-0.5"` halves every vendor folder. Parent folders grow with it and
+  the rest of the atlas makes room; a folder a rule enlarges never exceeds
+  `--balance-max-share` (default 85%) of the page. If several enlarged folders
+  together would exceed it, they share it: each keeps the same fraction of its
+  requested growth. Works inside submodules too.
 - **Time windows start from the real repo** — with `--since` / `--max-commits`
   the video opens on the repository as it already was before the first commit
   in the window, then animates only what changes (`--empty-start` to grow it
@@ -220,7 +223,7 @@ Run `gitatlas --help` for the complete, grouped list. Highlights:
 | Git & input | `--rev`, `--since`, `--until`, `--max-commits`, `--empty-start`, `--full-history`, `--submodule-depth N`, `--no-submodules`, `--include-submodule NAME`, `--exclude-submodule NAME` |
 | Files & folders | `--include GLOB`, `--exclude GLOB` (repeatable; matched against the repo-relative path, exclude wins) |
 | Output/timing | `-o/--out`, `--codec mp4\|webm`, `--quality draft\|balanced\|high`, `--resolution WxH`, `--fps`, `--seconds`, `--seconds-per-commit`, `--threads` |
-| Layout | `--max-depth`, `--depth-mode omit\|collapse`, `--balance`, `--balance-rule GLOB=DELTA`, `--gamma`, `--size-cap`, `--min-open-px`, `--pad`, `--margin`, `--saturation`, `--background #RRGGBB` |
+| Layout | `--max-depth`, `--depth-mode omit\|collapse`, `--balance`, `--balance-rule GLOB=DELTA`, `--balance-max-share`, `--gamma`, `--size-cap`, `--min-open-px`, `--pad`, `--margin`, `--saturation`, `--background #RRGGBB` |
 | Color groups | `--color-root FOLDER`, `--color-module FOLDER` (both repeatable), `--no-auto-color`, `--no-submodule-colors` |
 | Tiles | `--no-minimap`, `--minimap-line-gap`, `--minimap-max-lines`, `--no-border`, `--border-width` |
 | Labels | `--no-dir-names`, `--dir-name-max-depth`, `--file-names`, `--file-name-min-px`, `--label-size` |

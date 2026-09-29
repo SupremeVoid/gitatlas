@@ -291,16 +291,25 @@ pub struct RenderArgs {
     /// up a speck (0.25: a folder 100x its neighbour gets ~32x the area).
     #[arg(long, default_value_t = 0.25, help_heading = "Layout")]
     pub balance: f32,
-    /// Adjust --balance for folders matching GLOB by DELTA (repeatable; last
-    /// match wins). Higher pulls the folder toward a typical sibling's size (a
-    /// giant shrinks, a speck grows), lower toward its true proportion.
-    /// E.g. "src/docs=+0.4", "vendor/**=-0.25". Effective range -1..1.
+    /// Resize folders matching GLOB relative to their balanced size (repeatable;
+    /// last match wins): DELTA +1 doubles the area on the page, +0.5 = 1.5x,
+    /// -0.5 halves it. Parent folders grow with it; the rest makes room.
+    /// E.g. "src/docs=+1", "vendor/**=-0.5".
     #[arg(
         long = "balance-rule",
         value_name = "GLOB=DELTA",
         help_heading = "Layout"
     )]
     pub balance_rule: Vec<String>,
+    /// Upper limit for folders balance rules enlarge, as a share of the whole
+    /// atlas (0.05..1); several such folders share it in proportion.
+    #[arg(
+        long,
+        value_name = "SHARE",
+        default_value_t = 0.85,
+        help_heading = "Layout"
+    )]
+    pub balance_max_share: f32,
     /// Fixed area-metric cap in lines (default: auto = 95th percentile).
     #[arg(long, help_heading = "Layout")]
     pub size_cap: Option<f32>,
@@ -559,6 +568,7 @@ impl RenderArgs {
                 .iter()
                 .map(|r| parse_balance_rule(r))
                 .collect::<Result<_>>()?,
+            balance_max_share: self.balance_max_share,
             size_cap: self.size_cap,
             min_open_px: self.min_open_px,
             pad: self.pad,

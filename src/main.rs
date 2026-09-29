@@ -131,7 +131,7 @@ fn setup_render(
     images_extra: &HashMap<String, PathBuf>,
     size_cap: f32,
     colors: groups::ColorMap,
-    dir_balance: rustc_hash::FxHashMap<u64, f32>,
+    dir_scale: rustc_hash::FxHashMap<u64, f32>,
 ) -> (RenderCtx, LayoutParams, Rect) {
     // Merge avatar image sources: config-file committer images, then --avatar-config.
     let mut images = images_extra.clone();
@@ -205,7 +205,8 @@ fn setup_render(
     let params = LayoutParams {
         gamma: cfg.gamma,
         balance: cfg.balance,
-        dir_balance: std::sync::Arc::new(dir_balance),
+        dir_scale: std::sync::Arc::new(dir_scale),
+        max_share: cfg.balance_max_share,
         min_weight: 1.0,
         size_cap,
         min_open_px: cfg.min_open_px,
@@ -293,7 +294,7 @@ fn render(args: cli::RenderArgs) -> Result<()> {
         &cfg_images,
         size_cap,
         colors,
-        dir_balance_map(&cfg, &history)?,
+        dir_scale_map(&cfg, &history)?,
     );
 
     eprintln!("• rendering → {} ...", cfg.out.display());
@@ -415,7 +416,7 @@ fn snapshot(args: cli::SnapshotArgs) -> Result<()> {
         &cfg_images,
         size_cap,
         colors,
-        dir_balance_map(&cfg, &history)?,
+        dir_scale_map(&cfg, &history)?,
     );
 
     // Tree + layout at the target state.
@@ -731,9 +732,10 @@ fn glob_hits(is_match: impl Fn(&str) -> bool, path: &str) -> bool {
     false
 }
 
-/// Effective balance of every folder matched by a balance rule (keyed like tree
-/// nodes); unmatched folders keep the global balance. Last matching rule wins.
-fn dir_balance_map(cfg: &Config, history: &History) -> Result<rustc_hash::FxHashMap<u64, f32>> {
+/// Area multiplier (1 + delta) of every folder matched by a balance rule (keyed
+/// like tree nodes); unmatched folders keep their balanced size. Last matching
+/// rule wins.
+fn dir_scale_map(cfg: &Config, history: &History) -> Result<rustc_hash::FxHashMap<u64, f32>> {
     let mut map = rustc_hash::FxHashMap::default();
     let rules = &cfg.balance_rules;
     if rules.is_empty() {
@@ -743,7 +745,6 @@ fn dir_balance_map(cfg: &Config, history: &History) -> Result<rustc_hash::FxHash
         .iter()
         .map(|r| build_glob(&r.folder).map(|g| g.compile_matcher()))
         .collect::<Result<_>>()?;
-    let base = cfg.balance.clamp(0.0, 0.9);
     let mut seen: rustc_hash::FxHashSet<&str> = Default::default();
     let mut hits = vec![0usize; rules.len()];
     for path in &history.paths {
@@ -757,7 +758,7 @@ fn dir_balance_map(cfg: &Config, history: &History) -> Result<rustc_hash::FxHash
                 hits[r] += 1;
                 map.insert(
                     crate::color::hash_str(dir),
-                    (base + rules[r].balance).clamp(-1.0, 1.0),
+                    1.0 + rules[r].balance.max(-0.95),
                 );
             }
         }

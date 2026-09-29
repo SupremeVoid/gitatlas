@@ -3,6 +3,21 @@
 All notable changes to gitatlas are documented here. This project adheres to
 [Semantic Versioning](https://semver.org/).
 
+## 1.4.1
+
+- **Balance rules resize relative to the balanced size.** In 1.4.0 a rule
+  pulled a folder toward its *typical sibling*, so a small folder among small
+  siblings barely moved. DELTA is now a relative change of the folder's area on
+  the whole page versus what the global `--balance` gives it: `+1` doubles it,
+  `+0.5` is 1.5x, `-0.5` halves it. Parent folders grow by the same amount and
+  the rest of the atlas makes room, so nested folders really get bigger.
+- `--balance-max-share` (config `balance_max_share`, default 0.85): a folder a
+  rule enlarges never takes more than this share of the page. When several
+  enlarged folders together would exceed it, their growth is scaled by one
+  common factor, so they keep their sizes relative to each other; a folder is
+  never pushed below its balanced size, and a rule on a folder inside an
+  enlarged one takes room from its siblings instead of the page.
+
 ## 1.4.0
 
 - **Balance rules.** `--balance-rule GLOB=DELTA` (repeatable; config

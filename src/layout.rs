@@ -18,9 +18,11 @@ pub struct LayoutParams {
     pub gamma: f32,
     /// Folder balancing 0..0.9 (see `balanced_shares`); 0 disables it.
     pub balance: f32,
-    /// Per-folder balance (-1..1) for folders matched by a balance rule, keyed
-    /// like tree nodes (`hash_str(full path)`); other folders use `balance`.
-    pub dir_balance: std::sync::Arc<FxHashMap<u64, f32>>,
+    /// Area multiplier (1 + rule delta) for folders matched by a balance rule,
+    /// keyed like tree nodes (`hash_str(full path)`); see `rule_areas`.
+    pub dir_scale: std::sync::Arc<FxHashMap<u64, f32>>,
+    /// Upper limit for a folder a rule enlarges, as a share of the whole atlas.
+    pub max_share: f32,
     /// Minimum weight floor (in "lines") so tiny files stay visible.
     pub min_weight: f32,
     /// Cap on the area metric (stable, computed once globally) so one huge file
@@ -44,7 +46,8 @@ impl Default for LayoutParams {
         LayoutParams {
             gamma: 0.5,
             balance: 0.0,
-            dir_balance: Default::default(),
+            dir_scale: Default::default(),
+            max_share: 0.85,
             min_weight: 1.0,
             size_cap: 4000.0,
             min_open_px: 34.0,
@@ -119,79 +122,44 @@ fn compute_weights(tree: &Tree, p: &LayoutParams) -> Vec<f32> {
 
 pub fn layout(tree: &Tree, frame: Rect, p: &LayoutParams) -> Layout {
     let weights = compute_weights(tree, p);
+    let areas = if p.dir_scale.is_empty() {
+        None
+    } else {
+        rule_areas(tree, &weights, p)
+    };
     let mut out = Layout {
         tiles: Vec::with_capacity(tree.nodes.len()),
         index: FxHashMap::with_capacity_and_hasher(tree.nodes.len() * 2, Default::default()),
         frame,
     };
     // Lay the root's children directly into the frame (root itself isn't drawn).
-    lay_children(tree, 0, frame, &weights, p, &mut out);
+    lay_children(tree, 0, frame, &weights, areas.as_deref(), p, &mut out);
     out
 }
 
 /// Sibling weights with folder balancing applied.
 ///
-/// `weights` holds true (proportional) subtree sums. Each sibling is pulled
-/// toward the *typical* sibling size G (the geometric mean of the siblings):
-///
-///   share = G · (w / G)^(1 - b)
-///
-/// With one balance b for all siblings this is just `w^(1-b)` up to a common
-/// factor: a module 100x its neighbour gets ~32x the area at b = 0.25 instead of
-/// 100x. A balance rule gives one folder its own b (global + delta): higher
-/// pulls it further toward G (a giant shrinks, a speck grows; b = 1 is exactly
-/// G), lower keeps it closer to its true proportion (b < 0 exaggerates).
-///
-/// Only the split among siblings is compressed — a parent still uses its true
-/// sum one level up, so the effect does not compound with depth. A folder's
-/// loose files count as ONE sibling (their combined sum, split proportionally),
-/// otherwise hundreds of small files would each be boosted and swamp the
-/// folders. Pure function of the tree, so still stable.
-fn balanced_shares(tree: &Tree, children: &[u32], weights: &[f32], p: &LayoutParams) -> Vec<f32> {
-    let b = p.balance.clamp(0.0, 0.9);
-    let rules = !p.dir_balance.is_empty();
-    if b <= 0.0 && !rules {
+/// `weights` holds true (proportional) subtree sums. With `balance` b > 0 each
+/// sibling folder's share becomes `sum^(1-b)`: a module 100x the size of its
+/// neighbour gets ~32x the area at b = 0.25 instead of 100x, so big modules stop
+/// crowding out small ones. Only the split among siblings is compressed — a
+/// parent still uses its true sum one level up, so the effect does not compound
+/// with depth. A folder's loose files count as ONE sibling (their combined sum,
+/// split proportionally), otherwise hundreds of small files would each be
+/// boosted and swamp the folders. Pure function of the tree, so still stable.
+fn balanced_shares(tree: &Tree, children: &[u32], weights: &[f32], balance: f32) -> Vec<f32> {
+    let b = balance.clamp(0.0, 0.9);
+    if b <= 0.0 {
         return children.iter().map(|&c| weights[c as usize]).collect();
     }
-    let is_dir = |c: u32| tree.nodes[c as usize].is_dir;
+    let e = 1.0 - b;
     let files_sum: f32 = children
         .iter()
-        .filter(|&&c| !is_dir(c))
+        .filter(|&&c| !tree.nodes[c as usize].is_dir)
         .map(|&c| weights[c as usize])
         .sum();
-
-    // Everything is scaled by 1/G^b (common to all siblings, so the layout is
-    // unchanged): a plain sibling is then exactly `w^(1-b)` — the same f32 math
-    // as without rules — and only a ruled folder needs G, the typical sibling
-    // size: G^b * (w/G)^(1-r) / G^b = exp((1-r)·ln w + (r-b)·ln G).
-    let plain = |w: f32| w.powf(1.0 - b);
     let file_scale = if files_sum > 0.0 {
-        plain(files_sum) / files_sum
-    } else {
-        0.0
-    };
-    let rule_of = |c: u32| -> Option<f32> {
-        if rules && is_dir(c) {
-            p.dir_balance.get(&tree.nodes[c as usize].key).copied()
-        } else {
-            None
-        }
-    };
-    let ln_g = if children.iter().any(|&c| rule_of(c).is_some()) {
-        // Geometric mean of the siblings: the folders plus the file bucket.
-        let (mut ln_sum, mut k) = (0.0f64, 0u32);
-        for &c in children {
-            let w = weights[c as usize];
-            if is_dir(c) && w > 0.0 {
-                ln_sum += (w as f64).ln();
-                k += 1;
-            }
-        }
-        if files_sum > 0.0 {
-            ln_sum += (files_sum as f64).ln();
-            k += 1;
-        }
-        if k > 0 { ln_sum / k as f64 } else { 0.0 }
+        files_sum.powf(e) / files_sum
     } else {
         0.0
     };
@@ -199,16 +167,144 @@ fn balanced_shares(tree: &Tree, children: &[u32], weights: &[f32], p: &LayoutPar
         .iter()
         .map(|&c| {
             let w = weights[c as usize];
-            match rule_of(c) {
-                Some(_) if w <= 0.0 => 0.0,
-                Some(r) => {
-                    ((1.0 - r as f64) * (w as f64).ln() + (r - b) as f64 * ln_g).exp() as f32
-                }
-                None if is_dir(c) => plain(w),
-                None => w * file_scale,
+            if tree.nodes[c as usize].is_dir {
+                w.powf(e)
+            } else {
+                w * file_scale
             }
         })
         .collect()
+}
+
+/// Page areas with balance rules applied, for every node; `None` when no rule
+/// matches a folder of this tree (then the plain balanced layout is used).
+///
+/// A rule scales a folder's area on the whole page relative to what the global
+/// balance gives it: multiplier 2 (`+1`) doubles it, 0.5 (`-0.5`) halves it.
+/// Its parent folders grow (or shrink) by the same absolute amount, and the rest
+/// of the page makes room proportionally. A folder a rule enlarges is capped at
+/// `max_share` of the page.
+fn rule_areas(tree: &Tree, weights: &[f32], p: &LayoutParams) -> Option<Vec<f64>> {
+    let nodes = &tree.nodes;
+    let n = nodes.len();
+    let mut mult = vec![1.0f64; n];
+    let mut ruled = Vec::new();
+    for (i, node) in nodes.iter().enumerate().skip(1) {
+        if node.is_dir
+            && let Some(&m) = p.dir_scale.get(&node.key)
+        {
+            mult[i] = m.max(0.01) as f64;
+            ruled.push(i);
+        }
+    }
+    if ruled.is_empty() {
+        return None;
+    }
+
+    // Page fraction of every node under the global balance alone (top-down;
+    // a child always comes after its parent in the arena).
+    let mut base = vec![0.0f64; n];
+    base[0] = 1.0;
+    for i in 0..n {
+        let kids = &nodes[i].children;
+        if kids.is_empty() {
+            continue;
+        }
+        let shares = balanced_shares(tree, kids, weights, p.balance);
+        let sum: f64 = shares.iter().map(|&s| s as f64).sum();
+        if sum > 0.0 {
+            for (&c, &s) in kids.iter().zip(&shares) {
+                base[c as usize] = base[i] * s as f64 / sum;
+            }
+        }
+    }
+
+    // Each ruled folder should end up with exactly `base * multiplier` of the
+    // page (at most `max_share` when enlarged); everything else shares the
+    // rest. Solve by fixed-point iteration on an effective multiplier: sum the
+    // tree bottom-up (a folder = its children, times its multiplier, so parents
+    // grow along), compare each ruled folder's share to its target, correct.
+    let cap = (p.max_share as f64).clamp(0.05, 1.0);
+    let mut target: Vec<f64> = ruled.iter().map(|&i| base[i] * mult[i]).collect();
+
+    // Several enlarged folders together may still want more than the cap. Then
+    // they balance each other: every enlargement (target - base) is scaled by
+    // one common factor so the outermost enlarged folders (a ruled folder
+    // inside another counts once, via its ancestor) fit within `max_share` —
+    // each keeps its growth relative to the others and never drops below its
+    // balanced size.
+    let mut parent = vec![usize::MAX; n];
+    for (i, node) in nodes.iter().enumerate() {
+        for &c in &node.children {
+            parent[c as usize] = i;
+        }
+    }
+    let is_ruled: Vec<bool> = {
+        let mut v = vec![false; n];
+        ruled.iter().for_each(|&i| v[i] = true);
+        v
+    };
+    let outermost = |i: usize| {
+        let mut a = parent[i];
+        while a != usize::MAX {
+            if is_ruled[a] && mult[a] > 1.0 {
+                return false;
+            }
+            a = parent[a];
+        }
+        true
+    };
+    let (mut grow, mut kept) = (0.0f64, 0.0f64);
+    for (k, &i) in ruled.iter().enumerate() {
+        if mult[i] > 1.0 && outermost(i) {
+            grow += target[k] - base[i];
+            kept += base[i];
+        }
+    }
+    if grow > 0.0 && kept + grow > cap {
+        let f = ((cap - kept) / grow).clamp(0.0, 1.0);
+        for (k, &i) in ruled.iter().enumerate() {
+            // Only the outermost ones compete for page room; a ruled folder
+            // inside an enlarged one grows at its siblings' expense instead.
+            if mult[i] > 1.0 && outermost(i) {
+                target[k] = base[i] + (target[k] - base[i]) * f;
+            }
+        }
+    }
+    // Final guard for folders nested in another enlarged folder.
+    for (k, &i) in ruled.iter().enumerate() {
+        if mult[i] > 1.0 {
+            target[k] = target[k].min(cap.max(base[i]));
+        }
+    }
+    let mut area = vec![0.0f64; n];
+    for _ in 0..48 {
+        for i in (0..n).rev() {
+            let kids = &nodes[i].children;
+            let a = if kids.is_empty() {
+                base[i]
+            } else {
+                kids.iter().map(|&c| area[c as usize]).sum()
+            };
+            area[i] = a * mult[i];
+        }
+        let total = area[0];
+        let mut settled = true;
+        for (&i, &t) in ruled.iter().zip(&target) {
+            let share = area[i] / total;
+            if share > 0.0 && (share / t - 1.0).abs() > 1e-4 {
+                settled = false;
+                // Moving this folder from share s to t (others fixed) scales it
+                // by t(1-s) / (s(1-t)); exact for one rule, converges for more.
+                let f = (t * (1.0 - share)) / (share * (1.0 - t).max(1e-9));
+                mult[i] = (mult[i] * f).clamp(1e-4, 1e7);
+            }
+        }
+        if settled {
+            break;
+        }
+    }
+    Some(area)
 }
 
 fn lay_children(
@@ -216,6 +312,7 @@ fn lay_children(
     parent: u32,
     rect: Rect,
     weights: &[f32],
+    areas: Option<&[f64]>,
     p: &LayoutParams,
     out: &mut Layout,
 ) {
@@ -223,11 +320,15 @@ fn lay_children(
     if children.is_empty() || rect.w <= 0.5 || rect.h <= 0.5 {
         return;
     }
-    let child_weights = balanced_shares(tree, children, weights, p);
+    let child_weights = match areas {
+        // Rules: page areas are already balanced and scaled.
+        Some(a) => children.iter().map(|&c| a[c as usize] as f32).collect(),
+        None => balanced_shares(tree, children, weights, p.balance),
+    };
     let rects = squarified_ordered(rect, &child_weights);
 
     for (&cidx, crect) in children.iter().zip(rects.iter()) {
-        lay_node(tree, cidx, *crect, weights, p, out);
+        lay_node(tree, cidx, *crect, weights, areas, p, out);
     }
 }
 
@@ -236,6 +337,7 @@ fn lay_node(
     idx: u32,
     rect: Rect,
     weights: &[f32],
+    areas: Option<&[f64]>,
     p: &LayoutParams,
     out: &mut Layout,
 ) {
@@ -279,7 +381,7 @@ fn lay_node(
         inner.h = (inner.h - p.label_h).max(0.0);
     }
     if inner.w > 0.5 && inner.h > 0.5 {
-        lay_children(tree, idx, inner, weights, p, out);
+        lay_children(tree, idx, inner, weights, areas, p, out);
     }
 }
 
@@ -487,16 +589,20 @@ mod tests {
     }
 
     #[test]
-    fn balance_rule_pulls_one_folder_toward_typical_size() {
-        // Three sibling folders: one huge, two small.
+    fn balance_rule_scales_page_area_relative_to_balanced_size() {
         let h = History {
-            paths: vec!["big/a.rs".into(), "s1/b.rs".into(), "s2/c.rs".into()],
+            paths: vec![
+                "big/a.rs".into(),
+                "s1/b.rs".into(),
+                "s2/c.rs".into(),
+                "big/sub/d.rs".into(),
+            ],
             authors: vec![],
             commits: vec![],
             baseline: vec![],
             submodules: vec![],
         };
-        let files = [(0u32, 100_000u32), (1, 100), (2, 100)];
+        let files = [(0u32, 100_000u32), (1, 100), (2, 100), (3, 300)];
         let tree = build_tree(
             &files,
             &h,
@@ -505,32 +611,58 @@ mod tests {
             false,
         );
         let frame = Rect::new(0.0, 0.0, 1000.0, 1000.0);
+        let page = frame.w * frame.h;
         let key = |n: &str| crate::color::hash_str(n);
         let area = |rules: &[(&str, f32)], name: &str| {
             let p = LayoutParams {
                 balance: 0.25,
                 size_cap: 1e9,
                 gamma: 1.0,
-                dir_balance: std::sync::Arc::new(rules.iter().map(|&(n, b)| (key(n), b)).collect()),
+                pad: 0.0,
+                label_h: 0.0,
+                min_open_px: 0.0,
+                dir_scale: std::sync::Arc::new(
+                    rules.iter().map(|&(n, d)| (key(n), 1.0 + d)).collect(),
+                ),
                 ..LayoutParams::default()
             };
             let l = layout(&tree, frame, &p);
             let t = l.get(key(name)).expect("tile");
             t.rect.w * t.rect.h
         };
-        // No rules: identical to plain balancing.
-        let (big, s1) = (area(&[], "big"), area(&[], "s1"));
-        // Pulling `big` harder toward typical shrinks it; `s1` gains.
-        assert!(area(&[("big", 0.75)], "big") < big);
-        assert!(area(&[("big", 0.75)], "s1") > s1);
-        // Pulling a small folder toward typical grows it.
-        assert!(area(&[("s1", 0.75)], "s1") > s1);
-        // Balance 1 = exactly the typical (geometric-mean) sibling size: the
-        // ~178x lead of `big` over `s1` at plain 0.25 drops to single digits.
-        let ratio = |rules: &[(&str, f32)]| area(rules, "big") / area(rules, "s1");
-        assert!(ratio(&[]) > 100.0);
-        assert!(ratio(&[("big", 1.0)]) < 10.0);
-        // Balance 0 for `big` = its true proportion: bigger than balanced.
-        assert!(area(&[("big", 0.0)], "big") > big);
+        let near = |a: f32, b: f32| (a / b - 1.0).abs() < 0.03;
+        let s1 = area(&[], "s1");
+        // +1 doubles a folder's share of the page; -0.5 halves it.
+        assert!(near(area(&[("s1", 1.0)], "s1"), 2.0 * s1));
+        assert!(near(area(&[("s1", -0.5)], "s1"), 0.5 * s1));
+        // Nested folders grow in absolute terms too (their parent makes room).
+        let sub = area(&[], "big/sub");
+        assert!(near(area(&[("big/sub", 1.0)], "big/sub"), 2.0 * sub));
+        // A rule matching no folder of this tree changes nothing.
+        assert_eq!(area(&[("nope", 5.0)], "s1"), s1);
+        // Absurd rules are capped at max_share (0.85) of the page.
+        assert!(near(area(&[("s1", 1000.0)], "s1"), 0.85 * page));
+        // Several enlarged folders over the limit share it, keeping their growth
+        // relative to each other: equal rules on equal folders -> equal halves.
+        let both = [("s1", 1000.0), ("s2", 1000.0)];
+        let (a1, a2) = (area(&both, "s1"), area(&both, "s2"));
+        assert!(near(a1, a2));
+        assert!(near(a1 + a2, 0.85 * page));
+        // Unequal rules: growth stays proportional (s1 wants 3x the growth of s2).
+        let uneq = [("s1", 300.0), ("s2", 100.0)];
+        let (g1, g2) = (area(&uneq, "s1") - s1, area(&uneq, "s2") - s1);
+        assert!((g1 / g2 - 3.0).abs() < 0.1, "growth ratio {}", g1 / g2);
+        assert!(
+            near(area(&uneq, "s1") + area(&uneq, "s2"), 0.85 * page),
+            "uneq sum {}",
+            (area(&uneq, "s1") + area(&uneq, "s2")) / page
+        );
+        // `big` alone already exceeds the cap: it keeps its balanced size (never
+        // shrunk), so the cap leaves no room for `s1` to grow — but a folder
+        // nested in `big` still grows, taking space from its siblings in `big`.
+        let nested = [("big", 5.0), ("big/sub", 1.0), ("s1", 5.0)];
+        assert!(near(area(&nested, "big"), area(&[], "big")));
+        assert!(near(area(&nested, "s1"), s1));
+        assert!(near(area(&nested, "big/sub"), 2.0 * sub));
     }
 }
