@@ -2,6 +2,7 @@
 
 pub mod avatar;
 pub mod frame;
+pub mod modern;
 pub mod text;
 
 use std::sync::Arc;

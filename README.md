@@ -27,6 +27,13 @@ Generate your own with `gitatlas /path/to/repo -o atlas.mp4`.*
 
 ## Features
 
+- **Modern look** (default) — a layered, lit atlas: a gradient backdrop with a
+  vignette, folder panels that gain elevation as they nest while their edges
+  fade with depth, files as cards with a lit top edge and an editor-style
+  "code" minimap, changes that bloom in mint / amber / red, beams as glowing
+  arcs with a travelling pulse, avatars in a coloured ring with a soft shadow
+  and aura, and a glassy HUD. `--style classic`
+  keeps the original flat wireframe look.
 - **Stable treemap layout** — an ordered "squarified" pack over name-sorted
   siblings with recursive containment, so persisting files stay put and the
   video is watchable, not a flickering mess. Level-of-detail collapses folders
@@ -223,6 +230,7 @@ Run `gitatlas --help` for the complete, grouped list. Highlights:
 | Git & input | `--rev`, `--since`, `--until`, `--max-commits`, `--empty-start`, `--full-history`, `--submodule-depth N`, `--no-submodules`, `--include-submodule NAME`, `--exclude-submodule NAME` |
 | Files & folders | `--include GLOB`, `--exclude GLOB` (repeatable; matched against the repo-relative path, exclude wins) |
 | Output/timing | `-o/--out`, `--codec mp4\|webm`, `--quality draft\|balanced\|high`, `--resolution WxH`, `--fps`, `--seconds`, `--seconds-per-commit`, `--threads` |
+| Look | `--style modern\|classic` |
 | Layout | `--max-depth`, `--depth-mode omit\|collapse`, `--balance`, `--balance-rule GLOB=DELTA`, `--balance-max-share`, `--gamma`, `--size-cap`, `--min-open-px`, `--pad`, `--margin`, `--saturation`, `--background #RRGGBB` |
 | Color groups | `--color-root FOLDER`, `--color-module FOLDER` (both repeatable), `--no-auto-color`, `--no-submodule-colors` |
 | Tiles | `--no-minimap`, `--minimap-line-gap`, `--minimap-max-lines`, `--no-border`, `--border-width` |

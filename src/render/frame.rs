@@ -27,6 +27,12 @@ pub struct RenderCtx {
     pub group_colors: rustc_hash::FxHashMap<u32, GroupColor>,
     /// Which folder colors each path (see `groups.rs`).
     pub colors: crate::groups::ColorMap,
+    /// Modern style (see `modern.rs`); false = classic.
+    pub modern: bool,
+    /// Modern: prebuilt backdrop (premultiplied RGBA) copied into each frame.
+    pub backdrop: Vec<u8>,
+    /// Modern: per-pixel vignette factor (0..=256), applied in the rgb24 repack.
+    pub vignette: Vec<u16>,
 }
 
 impl RenderCtx {
@@ -54,19 +60,19 @@ impl Scratch {
 }
 
 #[derive(Clone, Copy)]
-struct RTile {
-    key: u64,
-    rect: Rect,
-    depth: u32,
-    is_dir: bool,
-    collapsed: bool,
-    is_file: bool,
-    group_hue: f32,
-    raw_size: u32,
-    alpha: f32,
-    src_hi: bool,
-    node: u32,
-    child_count: u32,
+pub(super) struct RTile {
+    pub(super) key: u64,
+    pub(super) rect: Rect,
+    pub(super) depth: u32,
+    pub(super) is_dir: bool,
+    pub(super) collapsed: bool,
+    pub(super) is_file: bool,
+    pub(super) group_hue: f32,
+    pub(super) raw_size: u32,
+    pub(super) alpha: f32,
+    pub(super) src_hi: bool,
+    pub(super) node: u32,
+    pub(super) child_count: u32,
 }
 
 const ADDED_GLOW: [u8; 3] = [120, 235, 150];
@@ -86,10 +92,14 @@ fn glow_color(kind: ChangeKind) -> [u8; 3] {
 pub fn render_frame(ctx: &RenderCtx, plan: &FramePlan, s: &mut Scratch, out: &mut [u8]) {
     let cfg = &ctx.cfg;
     let (w, h) = (s.pm.width(), s.pm.height());
-    // Clear to opaque background.
-    s.pm.fill(tiny_skia::Color::from_rgba8(
-        ctx.bg[0], ctx.bg[1], ctx.bg[2], 255,
-    ));
+    // Clear to the backdrop (modern) or the opaque background colour.
+    if ctx.backdrop.len() == s.pm.data().len() {
+        s.pm.data_mut().copy_from_slice(&ctx.backdrop);
+    } else {
+        s.pm.fill(tiny_skia::Color::from_rgba8(
+            ctx.bg[0], ctx.bg[1], ctx.bg[2], 255,
+        ));
+    }
 
     build_tiles(plan, &mut s.tiles);
 
@@ -97,18 +107,33 @@ pub fn render_frame(ctx: &RenderCtx, plan: &FramePlan, s: &mut Scratch, out: &mu
     let pw = w as i32;
     let ph = h as i32;
     for t in &s.tiles {
-        draw_tile(ctx, plan, t, &mut s.pm, pw, ph);
+        if ctx.modern {
+            super::modern::draw_tile(ctx, plan, t, &mut s.pm, pw, ph);
+        } else {
+            draw_tile(ctx, plan, t, &mut s.pm, pw, ph);
+        }
     }
 
     // Beams (additive) over the tiles.
     if cfg.show_beams {
+        let time = plan.frame_index as f32 / cfg.fps.max(1) as f32;
         for b in &plan.beams {
-            draw_beam(&mut s.pm, b, cfg.beam_intensity);
+            if ctx.modern {
+                super::modern::draw_beam(&mut s.pm, b, cfg.beam_intensity, time);
+            } else {
+                draw_beam(&mut s.pm, b, cfg.beam_intensity);
+            }
         }
     }
 
     // Avatars (+ optional flowing name) on top.
-    if cfg.show_avatars {
+    if cfg.show_avatars && ctx.modern {
+        for a in &plan.avatars {
+            if a.alpha > 0.01 {
+                super::modern::draw_avatar(ctx, &mut s.pm, a);
+            }
+        }
+    } else if cfg.show_avatars {
         for a in &plan.avatars {
             if a.alpha <= 0.01 {
                 continue;
@@ -132,11 +157,19 @@ pub fn render_frame(ctx: &RenderCtx, plan: &FramePlan, s: &mut Scratch, out: &mu
 
     // HUD overlay.
     if cfg.show_hud {
-        draw_hud(ctx, plan, &mut s.pm);
+        if ctx.modern {
+            super::modern::draw_hud(ctx, plan, &mut s.pm);
+        } else {
+            draw_hud(ctx, plan, &mut s.pm);
+        }
     }
 
     // Repack premultiplied RGBA -> rgb24 (frames are opaque so premult == straight).
-    repack_rgb24(s.pm.data(), out);
+    if ctx.vignette.len() * 4 == s.pm.data().len() {
+        super::modern::repack_vignette(s.pm.data(), &ctx.vignette, out);
+    } else {
+        repack_rgb24(s.pm.data(), out);
+    }
 }
 
 fn build_tiles(plan: &FramePlan, tiles: &mut Vec<RTile>) {
@@ -343,7 +376,7 @@ fn draw_tile_label(ctx: &RenderCtx, plan: &FramePlan, t: &RTile, pm: &mut Pixmap
     }
 }
 
-fn tile_name<'a>(plan: &'a FramePlan, t: &RTile) -> &'a str {
+pub(super) fn tile_name<'a>(plan: &'a FramePlan, t: &RTile) -> &'a str {
     let kf: &Keyframe = if t.src_hi { &plan.hi } else { &plan.lo };
     kf.tree
         .nodes
@@ -395,7 +428,7 @@ fn draw_minimap(
 }
 
 #[inline]
-fn frac01(seed: u64) -> f32 {
+pub(super) fn frac01(seed: u64) -> f32 {
     // xorshift-ish scramble to [0,1)
     let mut x = seed.wrapping_add(0x9e3779b97f4a7c15);
     x = (x ^ (x >> 30)).wrapping_mul(0xbf58476d1ce4e5b9);
@@ -416,7 +449,7 @@ fn blend_px(data: &mut [u8], di: usize, c: [u8; 3], a: u32) {
     // alpha stays (opaque background keeps 255).
 }
 
-fn fill_rect(data: &mut [u8], pw: i32, ph: i32, r: &Rect, c: [u8; 3], alpha: f32) {
+pub(super) fn fill_rect(data: &mut [u8], pw: i32, ph: i32, r: &Rect, c: [u8; 3], alpha: f32) {
     let x0 = (r.x.floor() as i32).max(0);
     let y0 = (r.y.floor() as i32).max(0);
     let x1 = ((r.x + r.w).ceil() as i32).min(pw);
@@ -445,7 +478,16 @@ fn fill_rect(data: &mut [u8], pw: i32, ph: i32, r: &Rect, c: [u8; 3], alpha: f32
     }
 }
 
-fn hline(data: &mut [u8], pw: i32, ph: i32, y: i32, x0: i32, x1: i32, c: [u8; 3], alpha: f32) {
+pub(super) fn hline(
+    data: &mut [u8],
+    pw: i32,
+    ph: i32,
+    y: i32,
+    x0: i32,
+    x1: i32,
+    c: [u8; 3],
+    alpha: f32,
+) {
     if y < 0 || y >= ph {
         return;
     }
@@ -493,7 +535,15 @@ fn vline(data: &mut [u8], pw: i32, ph: i32, x: i32, y0: i32, y1: i32, c: [u8; 3]
     }
 }
 
-fn border_rect(data: &mut [u8], pw: i32, ph: i32, r: &Rect, c: [u8; 3], alpha: f32, width: f32) {
+pub(super) fn border_rect(
+    data: &mut [u8],
+    pw: i32,
+    ph: i32,
+    r: &Rect,
+    c: [u8; 3],
+    alpha: f32,
+    width: f32,
+) {
     let bw = width.max(1.0).round() as i32;
     let x0 = r.x.round() as i32;
     let y0 = r.y.round() as i32;

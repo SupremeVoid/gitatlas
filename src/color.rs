@@ -53,6 +53,18 @@ pub struct GroupColor {
     pub fill: [u8; 3],
     pub fill_lit: [u8; 3],
     pub minimap: [u8; 3],
+    /// Modern style: folder fill per depth (0..=3+), lighter as they nest.
+    pub m_dir: [[u8; 3]; 4],
+    /// Modern style: folder edge per depth tier (module / sub-module / deep).
+    pub m_edge: [[u8; 3]; 3],
+    /// Modern style: file card fill, its top highlight, collapsed-folder fill.
+    pub m_file: [u8; 3],
+    pub m_file_top: [u8; 3],
+    pub m_collapsed: [u8; 3],
+    /// Modern style: minimap "code" tones — plain, keyword accent, comment.
+    pub m_code: [[u8; 3]; 3],
+    /// Modern style: folder label colour per depth tier.
+    pub m_label: [[u8; 3]; 3],
 }
 
 impl GroupColor {
@@ -62,12 +74,37 @@ impl GroupColor {
         let fill = hsl_to_rgb(hue, saturation * 0.55, 0.09);
         let fill_lit = hsl_to_rgb(hue, saturation * 0.6, 0.16);
         let minimap = hsl_to_rgb(hue, saturation * 0.35, 0.42);
+        let s = saturation;
         GroupColor {
             hue,
             border,
             fill,
             fill_lit,
             minimap,
+            m_dir: [
+                hsl_to_rgb(hue, s * 0.34, 0.05),
+                hsl_to_rgb(hue, s * 0.32, 0.062),
+                hsl_to_rgb(hue, s * 0.30, 0.074),
+                hsl_to_rgb(hue, s * 0.28, 0.084),
+            ],
+            m_edge: [
+                hsl_to_rgb(hue, s * 1.05, 0.62),
+                hsl_to_rgb(hue, s * 0.85, 0.46),
+                hsl_to_rgb(hue, s * 0.6, 0.30),
+            ],
+            m_file: hsl_to_rgb(hue, s * 0.42, 0.15),
+            m_file_top: hsl_to_rgb(hue, s * 0.6, 0.30),
+            m_collapsed: hsl_to_rgb(hue, s * 0.45, 0.175),
+            m_code: [
+                hsl_to_rgb(hue, s * 0.40, 0.47),
+                hsl_to_rgb(hue + 28.0, s * 0.95, 0.66),
+                hsl_to_rgb(hue, s * 0.18, 0.33),
+            ],
+            m_label: [
+                mix(hsl_to_rgb(hue, s, 0.72), [255, 255, 255], 0.55),
+                mix(hsl_to_rgb(hue, s, 0.68), [255, 255, 255], 0.35),
+                hsl_to_rgb(hue, s * 0.6, 0.62),
+            ],
         }
     }
 }

@@ -75,6 +75,14 @@ render/
   avatar.rs avatar-config file / image dir / gravatar / 14 built-in pixel icons
             → premult circular sprites; unique per-author hue (golden-angle by
             index) shared by avatar tint + beams; wander + 5s idle fade; names
+  modern.rs the default "modern" style (frame.rs dispatches on ctx.modern):
+            prebuilt backdrop (gradient + Bayer dither) copied per frame,
+            vignette factors applied inside the rgb24 repack (free), depth-tiered
+            panels/edges, file cards + tokenized code minimap, additive blooms,
+            gradient-stroked quad-arc beams (wide glow pass without AA — AA on
+            wide strokes is the cost), ringed avatar sprites + ONE shared aura
+            mask tinted per author (thousands of committers), pill names, HUD.
+            Palette per group precomputed in GroupColor.m_* fields.
   frame.rs  RenderCtx + Scratch; render_frame(): interpolate tiles (lo→hi),
             fills/minimap-lines/borders/labels (direct pixel writes, no AA on hot
             paths), change-glow, beams (tiny-skia BlendMode::Plus), avatars, HUD;

@@ -3,6 +3,26 @@
 All notable changes to gitatlas are documented here. This project adheres to
 [Semantic Versioning](https://semver.org/).
 
+## 1.5.0
+
+- **New default look (`--style modern`).** A redesigned, layered atlas: gradient
+  backdrop with vignette; folder panels lighten as they nest while their edges
+  fade with depth (modules crisp, deep folders recede) with a tinted header tab;
+  files are borderless cards with a 1px gutter, a lit top edge and an
+  editor-style minimap (indented, tokenized lines with keyword accents and
+  comments); changed tiles bloom in mint / amber / red; beams are glowing arcs
+  with a gradient tail, an impact glow and a travelling pulse; avatars get a
+  coloured ring, a drop shadow and an aura, names sit on rounded pills; labels
+  use text shadows and ellipsis truncation and drop unreadable 1-2 letter
+  stubs; the HUD is a gradient bar with a gradient progress line and colour
+  dots for the language split. `--style classic` (config `style`) keeps the
+  previous look, unchanged.
+- Tighter nesting: the default folder padding (`--pad`) is reduced from 3 px to
+  2 px, leaving more room for tiles and labels (both styles; `--pad 3` for the
+  previous spacing).
+- The "·" separators in the HUD ("files · LoC", "930f·120.1k") are drawn; the
+  glyph was never cached, so it rendered as blank space.
+
 ## 1.4.1
 
 - **Balance rules resize relative to the balanced size.** In 1.4.0 a rule

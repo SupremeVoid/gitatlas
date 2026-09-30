@@ -147,6 +147,7 @@ fn setup_render(
         .iter()
         .flat_map(|a| a.name.chars())
         .chain(labels.values().flat_map(|l| l.chars()))
+        .chain(['…', '·'])
         .collect();
     let label_cache = GlyphCache::warm(&font, cfg.label_size, name_chars.iter().copied());
     let hud_cache = GlyphCache::warm(
@@ -164,6 +165,7 @@ fn setup_render(
             dir: cfg.avatar_dir.as_deref(),
             gravatar: cfg.gravatar,
             gravatar_timeout_ms: cfg.gravatar_timeout_ms,
+            modern: cfg.style == crate::config::Style::Modern,
         },
     );
 
@@ -201,6 +203,9 @@ fn setup_render(
         hud_h,
         group_colors,
         colors,
+        modern: cfg.style == crate::config::Style::Modern,
+        backdrop: Vec::new(),
+        vignette: Vec::new(),
     };
     let params = LayoutParams {
         gamma: cfg.gamma,
@@ -225,6 +230,11 @@ fn setup_render(
         cfg.width as f32 - 2.0 * cfg.margin,
         cfg.height as f32 - 2.0 * cfg.margin - hud_h,
     );
+    let mut ctx = ctx;
+    if ctx.modern {
+        ctx.backdrop = render::modern::build_backdrop(cfg.width, cfg.height, cfg.background);
+        ctx.vignette = render::modern::build_vignette(cfg.width, cfg.height, hud_h);
+    }
     (ctx, params, frame_rect)
 }
 

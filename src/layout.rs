@@ -51,7 +51,7 @@ impl Default for LayoutParams {
             min_weight: 1.0,
             size_cap: 4000.0,
             min_open_px: 34.0,
-            pad: 3.0,
+            pad: 2.0,
             label_h: 14.0,
             label_min_px: 46.0,
             label_max_depth: u32::MAX,

@@ -281,6 +281,17 @@ pub fn generate(d: &Config, history: &History) -> String {
         ),
         "background RGB 0-255",
     );
+    line(
+        &mut s,
+        &format!(
+            "style = {:?}",
+            match d.style {
+                crate::config::Style::Modern => "modern",
+                crate::config::Style::Classic => "classic",
+            }
+        ),
+        "modern | classic",
+    );
 
     s.push_str(
         "

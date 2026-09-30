@@ -6,7 +6,7 @@ use std::path::PathBuf;
 use anyhow::{Result, bail};
 use clap::{Args, Parser, Subcommand, ValueEnum};
 
-use crate::config::{Codec, Config, DepthMode, Quality};
+use crate::config::{Codec, Config, DepthMode, Quality, Style};
 use crate::ingest::IngestOptions;
 
 #[derive(Copy, Clone, PartialEq, Eq, ValueEnum)]
@@ -19,6 +19,11 @@ pub enum QualityArg {
     Draft,
     Balanced,
     High,
+}
+#[derive(Copy, Clone, PartialEq, Eq, ValueEnum)]
+pub enum StyleArg {
+    Modern,
+    Classic,
 }
 #[derive(Copy, Clone, PartialEq, Eq, ValueEnum)]
 pub enum DepthModeArg {
@@ -317,7 +322,7 @@ pub struct RenderArgs {
     #[arg(long, default_value_t = 34.0, help_heading = "Layout")]
     pub min_open_px: f32,
     /// Padding inside each folder (px).
-    #[arg(long, default_value_t = 3.0, help_heading = "Layout")]
+    #[arg(long, default_value_t = 2.0, help_heading = "Layout")]
     pub pad: f32,
     /// Outer margin around the whole atlas (px).
     #[arg(long, default_value_t = 8.0, help_heading = "Layout")]
@@ -328,6 +333,10 @@ pub struct RenderArgs {
     /// Background color as #RRGGBB.
     #[arg(long, default_value = "#0c0d10", help_heading = "Layout")]
     pub background: String,
+    /// Visual style: modern (layered depth, glows, arced beams) or classic (the
+    /// original flat wireframe look).
+    #[arg(long, value_enum, default_value = "modern", help_heading = "Layout")]
+    pub style: StyleArg,
 
     // ---------------- Color groups ----------------
     /// Color by the subfolders of FOLDER instead of by top-level folder
@@ -575,6 +584,10 @@ impl RenderArgs {
             margin: self.margin,
             saturation: self.saturation,
             background: parse_hex_color(&self.background)?,
+            style: match self.style {
+                StyleArg::Modern => Style::Modern,
+                StyleArg::Classic => Style::Classic,
+            },
             color_roots: self.color_root,
             color_modules: self.color_module,
             auto_color: !self.no_auto_color,

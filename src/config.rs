@@ -12,6 +12,16 @@ pub enum Codec {
     Webm,
 }
 
+/// Visual style of the atlas.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Style {
+    /// Layered depth, glows, arced beams, ringed avatars (default).
+    Modern,
+    /// The original flat wireframe look.
+    Classic,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Quality {
@@ -85,6 +95,7 @@ pub struct Config {
     pub margin: f32,
     pub saturation: f32,
     pub background: [u8; 3],
+    pub style: Style,
 
     // ---- color groups ----
     /// Folders whose direct subfolders each get their own color.
@@ -181,10 +192,11 @@ impl Default for Config {
             balance_max_share: 0.85,
             size_cap: None,
             min_open_px: 34.0,
-            pad: 3.0,
+            pad: 2.0,
             margin: 8.0,
             saturation: 0.72,
             background: [12, 13, 16],
+            style: Style::Modern,
             color_roots: Vec::new(),
             color_modules: Vec::new(),
             auto_color: true,
